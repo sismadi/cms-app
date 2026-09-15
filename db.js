@@ -12,7 +12,7 @@
 //     dari sesi login aktif (lihat auth.js) — halaman (editor.js,
 //     postingan.js, dst.) tidak perlu mengurus tenantId sendiri.
 // ============================================================
-const API_BASE = '/api';
+const API_BASE = 'https://cms-api.piawai.workers.dev/api';
 
 const SCOPED_TABLES = new Set(['users', 'post', 'komentar']);
 
