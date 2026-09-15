@@ -1,0 +1,10 @@
+User-agent: *
+Disallow: /login
+Disallow: /register
+Disallow: /dashboard
+Disallow: /editor
+Disallow: /postingan
+Disallow: /profil
+Disallow: /tenant
+Disallow: /api/
+Allow: /
