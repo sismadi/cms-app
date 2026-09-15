@@ -14,12 +14,12 @@ async function resolveEditor(postId) {
         post = await db.find('post', p => p.id === postId);
         if (!post) {
             return [{ section: 'titleHero', title: 'Artikel Tidak Ditemukan',
-                       description: `Artikel dengan id <strong>${postId}</strong> tidak ditemukan di blog Anda.` }];
+                       description: `Artikel dengan id <strong>${postId}</strong> tidak ditemukan di CMS Anda.` }];
         }
     }
 
     const isEdit = !!post;
-    const previewUrl = post && post.status === 'publish' ? `/${user.tenantKode}/${post.slug}` : null;
+    const previewUrl = post && post.status === 'publish' ? `?user/${user.cmsKode}/${post.slug}` : null;
 
     return [
         {

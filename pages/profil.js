@@ -1,6 +1,9 @@
 // ============================================================
-// pages/profil.js — Edit profil blog (nama tampilan, bio, avatar).
-// Catatan: kodeToko (slug URL) SENGAJA tidak bisa diubah dari sini —
+// pages/profil.js — Edit profil CMS milik akun yang sedang login (nama
+// tampilan, bio, avatar). Halaman ADMIN (butuh login) — beda dengan
+// rute publik ?profile/<kodeCms> di pages/public.js (itu yang tampil
+// ke pengunjung; ini formulir editnya, khusus pemilik).
+// Catatan: kodeCms (slug URL) SENGAJA tidak bisa diubah dari sini —
 // mengubahnya akan merusak tautan yang sudah dibagikan/terindex.
 // ============================================================
 web.routes.profil = 'resolveProfil';
@@ -10,23 +13,23 @@ async function resolveProfil() {
     if (guard) return guard;
 
     const user = auth.currentUser();
-    const tenants = await db.allTenants();
-    const tenant = tenants.find(t => t.id === user.tenantId);
-    if (!tenant) return [{ section: 'titleHero', title: 'Data Blog Tidak Ditemukan' }];
+    const daftarCms = await db.allCms();
+    const cms = daftarCms.find(c => c.id === user.cmsId);
+    if (!cms) return [{ section: 'titleHero', title: 'Data CMS Tidak Ditemukan' }];
 
     return [
         {
             section: 'titleHero',
-            title: 'Profil Blog',
-            description: `Alamat blog: <a href="/${tenant.kodeToko}" target="_blank" rel="noopener">piawai.id/${tenant.kodeToko}</a> (tidak dapat diubah).`,
+            title: 'Profil CMS',
+            description: `Alamat CMS: <a href="?profile/${cms.kodeCms}" target="_blank" rel="noopener">Lihat CMS publik (${cms.kodeCms})</a> (kode CMS tidak dapat diubah).`,
         },
         {
             section: 'articleFull',
             subtitle: 'Edit Profil',
             fields: [
-                { type: 'text', name: 'nama', label: 'Nama Tampilan', value: tenant.nama, required: true },
-                { type: 'textarea', name: 'bio', label: 'Bio Singkat', rows: 3, value: tenant.bio },
-                { type: 'text', name: 'avatarUrl', label: 'URL Foto Profil (opsional)', value: tenant.avatarUrl },
+                { type: 'text', name: 'nama', label: 'Nama Tampilan', value: cms.nama, required: true },
+                { type: 'textarea', name: 'bio', label: 'Bio Singkat', rows: 3, value: cms.bio },
+                { type: 'text', name: 'avatarUrl', label: 'URL Foto Profil (opsional)', value: cms.avatarUrl },
             ],
             submitText: 'Simpan Profil',
             onSubmit: 'event.preventDefault(); profilPage.handleSubmit(this);',
@@ -42,12 +45,12 @@ const profilPage = {
         const btn = form.querySelector('button[type="submit"]');
         if (btn) { btn.disabled = true; btn.textContent = 'Menyimpan...'; }
         try {
-            await db.updateTenant(user.tenantId, {
+            await db.updateCms(user.cmsId, {
                 nama: val('nama'), bio: val('bio'), avatarUrl: val('avatarUrl') || null,
             });
             // Sinkronkan nama tampilan di sesi lokal supaya menu langsung terlihat update.
             const session = auth.currentUser();
-            session.tenantNama = val('nama');
+            session.cmsNama = val('nama');
             localStorage.setItem(auth.SESSION_KEY, JSON.stringify(session));
         } catch (e) {
             alert(e.message);
@@ -56,7 +59,7 @@ const profilPage = {
         }
         if (btn) { btn.disabled = false; btn.textContent = 'Simpan Profil'; }
         if (typeof renderMenu === 'function') renderMenu();
-        alert('Profil blog tersimpan.');
+        alert('Profil CMS tersimpan.');
         web.navigate('profil');
     },
 };

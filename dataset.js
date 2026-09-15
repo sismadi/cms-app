@@ -7,13 +7,13 @@ const siteConfig = [
     { slug: 'dashboard',  label: 'Dashboard', menu: true, role: ['owner', 'penulis'] },
     { slug: 'editor',     label: 'Tulis Baru', menu: true, role: ['owner', 'penulis'] },
     { slug: 'postingan',  label: 'Artikel Saya', menu: true, role: ['owner', 'penulis'] },
-    { slug: 'profil',     label: 'Profil Blog', menu: true, role: ['owner'] },
-    { slug: 'tenant',     label: 'Kelola Blog', menu: true, role: ['superadmin'] },
+    { slug: 'profil',     label: 'Profil CMS', menu: true, role: ['owner'] },
+    { slug: 'cms',        label: 'Kelola CMS', menu: true, role: ['superadmin'] },
     { slug: 'login',      label: 'Masuk',     menu: true, guestOnly: true },
 ];
 
 /** Ubah teks bebas jadi slug url-safe (huruf kecil, angka, strip). Dipakai
- *  oleh editor.js (judul artikel -> slug) & auth.js (nama blog -> kode blog). */
+ *  oleh editor.js (judul artikel -> slug) & auth.js (nama CMS -> kode CMS). */
 function slugify(text) {
     return String(text || '')
         .toLowerCase()
@@ -25,19 +25,18 @@ function slugify(text) {
         .slice(0, 60) || 'artikel';
 }
 
-function formatRupiah(n) {
-    return 'Rp' + Math.round(n || 0).toLocaleString('id-ID');
-}
-
-// Daftar file JS halaman ADMIN yang dimuat berurutan sebelum menu
-// dirender. Halaman publik (beranda, /:user, /:user/:slug) TIDAK ada
-// di sini — semua itu di-SSR langsung oleh worker.js.
+// Daftar file JS halaman yang dimuat berurutan sebelum menu dirender.
+// Termasuk pages/public.js (beranda, profil CMS, artikel + komentar) —
+// dulu di-SSR langsung oleh worker.js, sekarang di-render client-side
+// di sini karena backend (cms-api) sudah dipisah jadi microservice API
+// murni tanpa SSR. Lihat pages/public.js.
 const pageFiles = [
+    'pages/public.js',
     'pages/dashboard.js',
     'pages/editor.js',
     'pages/postingan.js',
     'pages/profil.js',
-    'pages/tenant.js',
+    'pages/cms.js',
 ];
 
 function loadPageScripts(files, done) {

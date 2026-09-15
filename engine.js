@@ -1,28 +1,127 @@
 // ============================================================
-// engine.js — Mesin render generik untuk aplikasi ADMIN blog multi-user.
+// engine.js — Mesin render generik untuk aplikasi SPA (admin + publik).
 // ============================================================
-// Dikonversi dari versi POS. Komponen render generik (titleHero/article/
-// genericForm/table/dst) DIPERTAHANKAN APA ADANYA. Yang BERUBAH: routing
-// sekarang berbasis PATH ASLI (/dashboard, /editor/post_123), bukan query
-// string (?dashboard) — supaya konsisten dengan halaman publik yang di-SSR
-// langsung oleh worker.js di /:user dan /:user/:slug. Lihat catatan di
-// worker.js: app.html HANYA disajikan untuk path admin yang reserved
-// (login/register/dashboard/editor/postingan/profil/tenant), jadi
-// window.location.pathname di sini SELALU salah satu dari itu.
+// PERUBAHAN ARSITEKTUR: repo ini (cms-app) sekarang dideploy sendiri
+// sebagai static hosting biasa (mis. GitHub Pages), TERPISAH dari
+// backend (cms-api). Hosting statis semacam ini tidak bisa melakukan
+// rewrite path server-side, jadi SEMUA rute — admin (dashboard, editor,
+// dst.) MAUPUN publik (beranda, profil CMS, artikel, yang dulu di-SSR
+// oleh worker.js) — sekarang dibaca dari QUERY STRING, BUKAN dari path
+// (`window.location.pathname`).
+//
+// Keuntungan praktis: karena path selalu tetap "/" (atau "/index.html"),
+// host statis apa pun otomatis menyajikan file yang sama untuk semua
+// rute tanpa perlu konfigurasi rewrite atau trik 404 apa pun — query
+// string tidak pernah memengaruhi file mana yang dicari oleh server.
 //
 // Halaman didaftarkan lewat `web.routes[slug] = 'namaResolver'` (lihat
 // pages/*.js) — resolver mengembalikan array blok { section, ...data }
 // yang dirender oleh `ui.render()` lewat `components[section](data)`.
+//
+// DUA bentuk query string dipakai berdampingan (lihat parseLocationParams
+// / buildQueryString di bawah):
+//   - Rute PUBLIK (home, profile, artikel) pakai bentuk "cantik" —
+//     query string yang diisi segmen mirip path, BUKAN pasangan
+//     key=value, supaya alamat CMS tetap enak dibaca & dibagikan:
+//       cms.piawai.id/                              -> beranda
+//       cms.piawai.id/?profile/<kodeCms>             -> profil CMS milik <kodeCms>
+//       cms.piawai.id/?user/<kodeCms>/<slug>         -> 1 artikel
+//     Ini TETAP query string murni (path selalu "/"), jadi hosting
+//     statis mana pun tetap menyajikan index.html yang sama tanpa
+//     rewrite apa pun — hanya *isi* query-nya yang dibuat mirip path.
+//   - Rute ADMIN (login, dashboard, editor, dst.) tetap format lama
+//     `?page=slug&param=nilai`, karena tidak perlu dibagikan/diindeks.
+//
+// Format navigasi (backward-compatible dengan pemanggilan lama seperti
+// `web.navigate('editor/' + id)`):
+//   - string 'dashboard'            -> ?page=dashboard
+//   - string 'editor/POST_ID'       -> ?page=editor&id=POST_ID
+//   - string 'profile/kode-cms'     -> ?profile/kode-cms
+//   - string 'artikel/kode/slug'    -> ?user/kode/slug
+//   - object {page, ...params}      -> dipakai langsung sebagai query
 // ============================================================
 
+// Untuk rute string legacy "page/a/b", segmen setelah 'page' dipetakan
+// ke nama query param berikut, sesuai halaman. Default: ['id'].
+const ROUTE_PARAM_KEYS = {
+    editor: ['id'],
+    profile: ['user'],
+    artikel: ['user', 'slug'],
+};
+
+// Rute publik yang memakai bentuk URL "cantik" (lihat catatan di atas).
+// `prefix` adalah segmen pertama setelah '?', `paramKeys` adalah urutan
+// nama param untuk segmen-segmen berikutnya.
+const PRETTY_PUBLIC_ROUTES = {
+    profile: { prefix: 'profile', paramKeys: ['user'] },
+    artikel: { prefix: 'user', paramKeys: ['user', 'slug'] },
+};
+
+/** Ubah target navigasi (string legacy ATAU object) jadi object query params {page, ...}. */
+function resolveNavParams(target) {
+    if (target && typeof target === 'object') return target;
+    if (typeof target !== 'string' || !target) return null;
+    const [page, ...rest] = target.split('/');
+    const keys = ROUTE_PARAM_KEYS[page] || ['id'];
+    const params = { page };
+    rest.forEach((val, i) => { if (keys[i]) params[keys[i]] = val; });
+    return params;
+}
+
+/** Baca `window.location.search` saat ini jadi object params {page, ...}.
+ *  Coba format publik "cantik" (?profile/x, ?user/x/y) dulu, baru jatuh
+ *  ke format admin lama (?page=x&...) — lihat catatan arsitektur di atas. */
+function parseLocationParams() {
+    const raw = window.location.search.replace(/^\?/, '');
+    if (!raw) return { page: 'home' };
+
+    const [prefix, ...segs] = raw.split('/');
+    const prettyEntry = Object.entries(PRETTY_PUBLIC_ROUTES).find(([, route]) => route.prefix === prefix);
+    if (prettyEntry) {
+        const [page, route] = prettyEntry;
+        const params = { page };
+        route.paramKeys.forEach((key, i) => {
+            if (segs[i] !== undefined) params[key] = decodeURIComponent(segs[i]);
+        });
+        return params;
+    }
+
+    const sp = new URLSearchParams(raw);
+    const params = Object.fromEntries(sp.entries());
+    if (!params.page) params.page = 'home';
+    return params;
+}
+
+/** Kebalikan dari parseLocationParams: params {page, ...} -> query string
+ *  siap dipakai di href / pushState (termasuk tanda '?' di depan, atau
+ *  string kosong untuk beranda). */
+function buildQueryString(params) {
+    const { page, ...rest } = params;
+    if (page === 'home') return '';
+
+    const pretty = PRETTY_PUBLIC_ROUTES[page];
+    if (pretty) {
+        const segs = pretty.paramKeys.map(key => encodeURIComponent(rest[key] ?? ''));
+        return `?${pretty.prefix}/${segs.join('/')}`;
+    }
+
+    const sp = new URLSearchParams();
+    sp.set('page', page);
+    Object.entries(rest).forEach(([k, v]) => {
+        if (v !== undefined && v !== null && v !== '') sp.set(k, v);
+    });
+    return `?${sp.toString()}`;
+}
+
 const web = {
-    routes: {},   // diisi oleh masing-masing pages/*.js, mis. web.routes.produk = 'resolveProduk'
+    routes: {},   // diisi oleh masing-masing pages/*.js, mis. web.routes.postingan = 'resolvePostingan'
+    currentParams: {}, // query params rute yang sedang aktif — bisa dibaca resolver publik (lihat pages/public.js)
 
     gebi: (id) => document.getElementById(id),
 
     // ------------------------------------------------------------
     // FORM DRAWER — panel geser dari kanan, dipakai ulang oleh SEMUA
-    // form tambah/edit (produk, kontak, lokasi, distribusi, transaksi).
+    // form tambah/edit (artikel, profil CMS, kelola CMS).
     // Markup statis ada di index.html (#formDrawerOverlay/#formDrawerPanel).
     // ------------------------------------------------------------
     openDrawer: function (cfg) {
@@ -59,16 +158,17 @@ const web = {
     // (lihat resolveContent). Semua resolver di sini di-await karena
     // sebagian besar mengambil data lewat db.js (fetch async ke Worker API).
     // ------------------------------------------------------------
-    navigate: async function (slug) {
+    navigate: async function (target) {
         this.closeDrawer();
-        // Path asli, mis. "/editor/post_123" -> "editor/post_123". Kosong
-        // (path "/") tidak pernah terjadi di sini karena worker.js hanya
-        // menyajikan app.html untuk path admin yang reserved — tapi tetap
-        // fallback ke 'dashboard' untuk jaga-jaga (mis. dibuka langsung
-        // lewat file lokal saat development).
-        const pathname = window.location.pathname.replace(/^\/+/, '').replace(/\/+$/, '');
-        const currentPath = slug || pathname || 'dashboard';
-        const [targetSlug, subParam] = currentPath.split('/');
+
+        // target bisa: undefined (baca dari URL saat ini, lihat
+        // parseLocationParams), string legacy ("dashboard",
+        // "editor/post_123", "artikel/kode/slug"), atau object
+        // {page, ...params} langsung. Lihat resolveNavParams() di atas.
+        let params = resolveNavParams(target);
+        if (!params) params = parseLocationParams();
+        const targetSlug = params.page;
+        this.currentParams = params;
 
         let pageData = [];
         const resolverName = this.routes[targetSlug];
@@ -79,6 +179,10 @@ const web = {
 
         try {
             if (typeof resolverFn === 'function') {
+                // subParam dipertahankan untuk kompatibilitas resolver lama
+                // (mis. resolveEditor(postId)) — resolver baru (halaman
+                // publik) bisa juga baca web.currentParams langsung.
+                const subParam = ROUTE_PARAM_KEYS[targetSlug] ? params[ROUTE_PARAM_KEYS[targetSlug][0]] : undefined;
                 pageData = await Promise.resolve(resolverFn.call(this, subParam, targetSlug));
             } else {
                 pageData = [{ section: 'titleHero', title: 'Halaman Tidak Ditemukan', description: `Rute <strong>${targetSlug}</strong> tidak dikenal.` }];
@@ -90,10 +194,11 @@ const web = {
 
         await ui.render('content', pageData);
 
-        if (slug !== undefined) {
-            window.history.pushState({ path: currentPath }, '', `/${currentPath}`);
+        if (target !== undefined) {
+            const qs = buildQueryString(params);
+            window.history.pushState({ params }, '', qs || window.location.pathname);
         }
-        document.title = `Piawai Blog | ${targetSlug.toUpperCase()}`;
+        document.title = `Piawai CMS | ${targetSlug.toUpperCase()}`;
         window.scrollTo(0, 0);
         if (typeof svg?.di === 'function') svg.di();
 
@@ -241,6 +346,10 @@ const components = {
         </form>`;
     },
 
+    /** Blok HTML mentah yang sudah dirakit oleh resolver (mis. halaman publik
+     *  di pages/public.js) — dipakai saat komponen generik lain tidak pas. */
+    rawHtml: (d) => d.html || '',
+
     titleHero: (d) => `
         <div class="row page">
             <div class="artikel">
@@ -291,8 +400,8 @@ const components = {
             </div>
         </div>`,
 
-    /** Varian 'article' satu kolom lebar penuh — dipakai oleh semua halaman CRUD POS
-     *  (daftar produk/kontak/lokasi/dst butuh lebar penuh untuk tabel). */
+    /** Varian 'article' satu kolom lebar penuh — dipakai oleh semua halaman CRUD
+     *  admin (daftar artikel, daftar CMS, dst. butuh lebar penuh untuk tabel). */
     articleFull: (d) => `
         <div class="row page4">
             <div class="col-1-1 artikel">
@@ -313,7 +422,7 @@ const components = {
             </div>
         </div>`,
 
-    /** Bar chart SVG generik — dipakai oleh dashboard (mis. produk terlaris). */
+    /** Bar chart SVG generik — dipakai oleh dashboard (mis. artikel terpopuler). */
     barChart: (d) => {
         const items  = d.items || [];
         const max    = Math.max(1, ...items.map(i => i.value));

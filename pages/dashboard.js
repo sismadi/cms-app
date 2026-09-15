@@ -1,6 +1,6 @@
 // ============================================================
 // pages/dashboard.js — Ringkasan artikel (statGrid, lihat engine.js).
-// Superadmin diarahkan ke halaman Kelola Blog, bukan dashboard
+// Superadmin diarahkan ke halaman Kelola CMS, bukan dashboard
 // penulis (karena superadmin tidak punya artikel sendiri).
 // ============================================================
 web.routes.dashboard = 'resolveDashboard';
@@ -10,7 +10,7 @@ async function resolveDashboard() {
     if (guard) return guard;
 
     const user = auth.currentUser();
-    if (user.role === 'superadmin') return resolveTenant();
+    if (user.role === 'superadmin') return resolveCms();
 
     const posts = await db.query('post', () => true);
     const published = posts.filter(p => p.status === 'publish');
@@ -28,7 +28,7 @@ async function resolveDashboard() {
         .map(p => `link:${p.judul} (${p.status === 'publish' ? 'publish' : 'draft'}):editor/${p.id}`);
 
     return [
-        { section: 'titleHero', title: 'Dashboard', description: `Selamat datang kembali, <strong>${user.name}</strong> &mdash; ${user.tenantNama}.` },
+        { section: 'titleHero', title: 'Dashboard', description: `Selamat datang kembali, <strong>${user.name}</strong> &mdash; ${user.cmsNama}.` },
         {
             section: 'statGrid',
             stats: [
@@ -48,7 +48,7 @@ async function resolveDashboard() {
                     '---',
                     'link:Kelola Semua Artikel:postingan',
                     '---',
-                    'link:Edit Profil Blog:profil',
+                    'link:Edit Profil CMS:profil',
                 ],
             },
             rightCol: {

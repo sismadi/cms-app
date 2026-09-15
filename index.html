@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="utf-8">
+    <meta name="description" content="Piawai CMS — platform CMS multi-penulis. Baca artikel dari berbagai penulis, atau masuk untuk mengelola CMS Anda sendiri.">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5">
+    <!-- Shell tunggal ini sekarang menyajikan halaman PUBLIK (beranda,
+         ?profile/<kodeCms>, ?user/<kodeCms>/<slug>) DAN admin (?page=login/
+         dashboard/dst) — lihat engine.js & pages/public.js. Karena semua
+         rute lewat query string di satu file, tidak ada lagi pembagian
+         "app.html vs index.html" seperti versi Worker sebelumnya. -->
+    <title>Piawai CMS</title>
+    <link rel="stylesheet" type="text/css" href="style.css">
+    <link rel="stylesheet" type="text/css" href="svg.css">
+</head>
+<body>
+
+  <div class="main" id="body">
+    <div id="stickyHeaderWrap">
+    <div class="row header">
+        <div class="kiri">
+            <a href="/" onclick="return web.navigate({page:'home'})" style="color:inherit;text-decoration:none;">
+                <span class="orange">Piawai CMS</span>
+                <span class="orange sub"></span>
+            </a>
+        </div>
+        <div class="kanan">
+            <div id="authSlot" class="auth-slot"></div>
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="menu-bar" id="stickyMenu">
+            <div class="burger" id="burgerBtn">&#9776;</div>
+            <nav class="nav-links" id="navLinks"></nav>
+        </div>
+    </div>
+    </div>
+
+<div id="content"></div>
+
+<!-- FORM DRAWER — panel geser dari kanan, dipakai ulang oleh SEMUA form
+     tambah/edit (artikel, profil CMS, kelola CMS). -->
+<div id="formDrawerOverlay" class="form-drawer-overlay" onclick="web.closeDrawer()"></div>
+<div id="formDrawerPanel" class="form-drawer" role="dialog" aria-modal="true" aria-labelledby="formDrawerTitle">
+    <div class="form-drawer-header">
+        <span class="form-drawer-header-title" id="formDrawerTitle"></span>
+        <button type="button" class="form-drawer-close" onclick="web.closeDrawer()">&times; Tutup</button>
+    </div>
+    <div class="form-drawer-body" id="formDrawerBody"></div>
+</div>
+
+<div class="row footer">
+    <div class="kiri">Piawai CMS &mdash; Dasbor Penulis</div>
+    <div class="kanan">&nbsp; &copy; 2026</div>
+</div>
+
+</div>
+
+<script type="text/javascript" src="svg.js"></script>
+<script type="text/javascript" src="engine.js"></script>
+<script type="text/javascript" src="db.js"></script>
+<script type="text/javascript" src="auth.js"></script>
+
+<script type="text/javascript">
+if (typeof svg !== 'undefined') svg.di();
+</script>
+
+<script type="text/javascript">
+// Menu dibangun dari siteConfig (dataset.js). Menyaring berdasar status
+// login (guestOnly) & peran (role) — lihat komentar di dataset.js.
+function renderMenu() {
+    const navLinks = document.getElementById('navLinks');
+    if (!navLinks) return;
+
+    const user = (typeof auth !== 'undefined') ? auth.currentUser() : null;
+    const visible = p => (!p.guestOnly || !user) && (!p.role || (user && p.role.includes(user.role)));
+
+    navLinks.innerHTML = siteConfig
+        .filter(p => p.menu && visible(p))
+        .map(p => `<a href="?page=${p.slug}" onclick="return web.navigate('${p.slug}')">${p.label}</a>`)
+        .join('\n');
+
+    if (typeof auth !== 'undefined') auth.renderAuthUI();
+}
+</script>
+
+<script src="dataset.js"></script>
+<script>
+    loadPageScripts(pageFiles, () => {
+        renderMenu();
+    });
+</script>
+
+</body>
+</html>

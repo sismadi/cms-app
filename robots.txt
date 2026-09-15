@@ -5,6 +5,6 @@ Disallow: /dashboard
 Disallow: /editor
 Disallow: /postingan
 Disallow: /profil
-Disallow: /tenant
+Disallow: /cms
 Disallow: /api/
 Allow: /

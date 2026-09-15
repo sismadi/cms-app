@@ -1,62 +1,97 @@
 // ============================================================
-// db.js — Lapisan akses data (fetch ke Worker API) + auto tenant-scoping.
+// db.js — Lapisan akses data (fetch ke Worker API backend) + auto cms-scoping.
 // ============================================================
-// Sama seperti versi POS (all/find/query/insert/update/remove/upsertBy
-// dipertahankan), TAPI:
-//   - API_BASE sekarang RELATIF ('/api'), bukan absolute URL, karena
-//     app admin & Worker API dideploy sebagai SATU origin (lihat
-//     wrangler.toml [assets] di blog-api) — ini juga yang bikin SSR
-//     halaman publik bisa berbagi domain yang sama dengan app admin.
-//   - SCOPED_TABLES diperbarui utk tabel blog: users, post, komentar.
-//   - tenantId tetap otomatis ditambahkan ke tiap request tabel scoped
+// PERUBAHAN ARSITEKTUR (microservices, 2 repo terpisah):
+//   - API_BASE sekarang ABSOLUT (bukan '/api' relatif lagi), karena
+//     cms-app (frontend, repo ini) dan cms-api (backend) sekarang 2
+//     origin/deployment TERPISAH (mis. frontend di GitHub Pages, backend
+//     di Cloudflare Workers). ISI URL DI BAWAH sesuai hasil `wrangler
+//     deploy` di repo cms-api.
+//   - Semua parameter (table, id, cmsId) sekarang dikirim lewat QUERY
+//     STRING ke satu endpoint `/api`, BUKAN path segment (`/api/table/id`)
+//     seperti sebelumnya — konsisten dengan worker.js yang baru.
+//   - SCOPED_TABLES diperbarui utk tabel CMS: users, post, komentar.
+//   - cmsId tetap otomatis ditambahkan ke tiap request tabel scoped
 //     dari sesi login aktif (lihat auth.js) — halaman (editor.js,
-//     postingan.js, dst.) tidak perlu mengurus tenantId sendiri.
+//     postingan.js, dst.) tidak perlu mengurus cmsId sendiri.
 // ============================================================
-const API_BASE = 'https://cms-api.piawai.workers.dev/api';
+
+// GANTI dengan URL hasil `wrangler deploy` di repo cms-api, tanpa slash
+// di akhir. Contoh: 'https://cms-api.namaakun.workers.dev'
+const API_BASE = 'https://cms-api.<NAMA_AKUN>.workers.dev';
 
 const SCOPED_TABLES = new Set(['users', 'post', 'komentar']);
 
-async function apiGet(path) {
-    const res = await fetch(`${API_BASE}/${path}`);
+/** Bangun query string dari objek {key: value}, buang key yang kosong/undefined. */
+function qs(params) {
+    const sp = new URLSearchParams();
+    for (const [k, v] of Object.entries(params || {})) {
+        if (v !== undefined && v !== null && v !== '') sp.set(k, v);
+    }
+    const s = sp.toString();
+    return s ? `?${s}` : '';
+}
+
+async function apiGet(params) {
+    const res = await fetch(`${API_BASE}/api${qs(params)}`);
     if (!res.ok) {
-        let msg = `GET ${path} gagal (${res.status})`;
+        let msg = `GET /api gagal (${res.status})`;
         try { const j = await res.json(); if (j?.error) msg = j.error; } catch (e) {}
         throw new Error(msg);
     }
     return res.json();
 }
 
-async function apiSend(method, path, body) {
-    const res = await fetch(`${API_BASE}/${path}`, {
+async function apiSend(method, params, body) {
+    const res = await fetch(`${API_BASE}/api${qs(params)}`, {
         method,
         headers: { 'Content-Type': 'application/json' },
         body: body !== undefined ? JSON.stringify(body) : undefined,
     });
     if (res.status === 404) return null;
     if (!res.ok) {
-        let msg = `${method} ${path} gagal (${res.status})`;
+        let msg = `${method} /api gagal (${res.status})`;
         try { const j = await res.json(); if (j?.error) msg = j.error; } catch (e) {}
         throw new Error(msg);
     }
     return res.json();
 }
 
-function activeTenantId() {
-    const user = (typeof auth !== 'undefined') ? auth.currentUser() : null;
-    return user?.tenantId || null;
+/** Fetch ke endpoint /public (data siap-pakai untuk halaman publik, lihat pages/public.js). */
+async function apiPublicGet(params) {
+    const res = await fetch(`${API_BASE}/public${qs(params)}`);
+    const body = await res.json().catch(() => null);
+    if (!res.ok) throw new Error(body?.error || `GET /public gagal (${res.status})`);
+    return body;
 }
 
-function requireTenant() {
-    const t = activeTenantId();
-    if (!t) throw new Error('Tidak ada sesi aktif — silakan masuk kembali.');
-    return t;
+async function apiPublicSend(method, params, body) {
+    const res = await fetch(`${API_BASE}/public${qs(params)}`, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
+    const resBody = await res.json().catch(() => null);
+    if (!res.ok) throw new Error(resBody?.error || `${method} /public gagal (${res.status})`);
+    return resBody;
+}
+
+function activeCmsId() {
+    const user = (typeof auth !== 'undefined') ? auth.currentUser() : null;
+    return user?.cmsId || null;
+}
+
+function requireCms() {
+    const c = activeCmsId();
+    if (!c) throw new Error('Tidak ada sesi aktif — silakan masuk kembali.');
+    return c;
 }
 
 const db = {
     async all(table) {
-        let path = table;
-        if (SCOPED_TABLES.has(table)) path += `?tenantId=${encodeURIComponent(requireTenant())}`;
-        return apiGet(path);
+        const params = { table };
+        if (SCOPED_TABLES.has(table)) params.cmsId = requireCms();
+        return apiGet(params);
     },
 
     async find(table, predicate) {
@@ -71,25 +106,25 @@ const db = {
 
     async insert(table, row) {
         const body = { ...row };
-        let path = table;
+        const params = { table };
         if (SCOPED_TABLES.has(table)) {
-            const t = requireTenant();
-            body.tenantId = t;
-            path += `?tenantId=${encodeURIComponent(t)}`;
+            const c = requireCms();
+            body.cmsId = c;
+            params.cmsId = c;
         }
-        return apiSend('POST', path, body);
+        return apiSend('POST', params, body);
     },
 
     async update(table, id, patch) {
-        let path = `${table}/${id}`;
-        if (SCOPED_TABLES.has(table)) path += `?tenantId=${encodeURIComponent(requireTenant())}`;
-        return apiSend('PATCH', path, patch);
+        const params = { table, id };
+        if (SCOPED_TABLES.has(table)) params.cmsId = requireCms();
+        return apiSend('PATCH', params, patch);
     },
 
     async remove(table, id) {
-        let path = `${table}/${id}`;
-        if (SCOPED_TABLES.has(table)) path += `?tenantId=${encodeURIComponent(requireTenant())}`;
-        await apiSend('DELETE', path);
+        const params = { table, id };
+        if (SCOPED_TABLES.has(table)) params.cmsId = requireCms();
+        await apiSend('DELETE', params);
         return true;
     },
 
@@ -100,25 +135,33 @@ const db = {
         return this.update(table, existing.id, row);
     },
 
-    // --- Jalur eksplisit lintas-tenant, HANYA untuk auth.js (login/registrasi) ---
-    async allForTenant(table, tenantId) {
-        let path = table;
-        if (SCOPED_TABLES.has(table)) path += `?tenantId=${encodeURIComponent(tenantId)}`;
-        return apiGet(path);
+    // --- Jalur eksplisit lintas-CMS, HANYA untuk auth.js (login/registrasi) ---
+    async allForCms(table, cmsId) {
+        const params = { table };
+        if (SCOPED_TABLES.has(table)) params.cmsId = cmsId;
+        return apiGet(params);
     },
 
-    async insertForTenant(table, tenantId, row) {
+    async insertForCms(table, cmsId, row) {
         const body = { ...row };
-        let path = table;
+        const params = { table };
         if (SCOPED_TABLES.has(table)) {
-            body.tenantId = tenantId;
-            path += `?tenantId=${encodeURIComponent(tenantId)}`;
+            body.cmsId = cmsId;
+            params.cmsId = cmsId;
         }
-        return apiSend('POST', path, body);
+        return apiSend('POST', params, body);
     },
 
-    // --- Tabel `tenants` sendiri TIDAK di-scope (global) ---
-    async allTenants() { return apiGet('tenants'); },
-    async insertTenant(row) { return apiSend('POST', 'tenants', row); },
-    async updateTenant(id, patch) { return apiSend('PATCH', `tenants/${id}`, patch); },
+    // --- Tabel `cms` sendiri TIDAK di-scope (global) ---
+    async allCms() { return apiGet({ table: 'cms' }); },
+    async insertCms(row) { return apiSend('POST', { table: 'cms' }, row); },
+    async updateCms(id, patch) { return apiSend('PATCH', { table: 'cms', id }, patch); },
+
+    // --- Data publik (beranda / profil CMS / artikel + komentar) ---
+    async publicHome() { return apiPublicGet({ view: 'home' }); },
+    async publicProfile(userSlug) { return apiPublicGet({ view: 'profile', user: userSlug }); },
+    async publicArtikel(userSlug, slug) { return apiPublicGet({ view: 'artikel', user: userSlug, slug }); },
+    async publicKomentar(userSlug, slug, komentar) {
+        return apiPublicSend('POST', { view: 'komentar', user: userSlug, slug }, komentar);
+    },
 };
