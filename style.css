@@ -1486,3 +1486,33 @@ body.drawer-lock { overflow: hidden; }
   width: 100%; height: 100%;
   border: 0;
 }
+
+/* ============================================================
+   [PERF] Navigasi SPA — progress bar tipis + fade konten
+   ============================================================ */
+
+/* Garis progres tipis di atas layar, mirip indikator navigasi browser
+   native, supaya jeda fetch terasa "sedang memuat" alih-alih diam. */
+#navProgress {
+  position: fixed;
+  top: 0; left: 0;
+  height: 3px;
+  width: 0%;
+  background: var(--aColor, #DF8C43);
+  z-index: 9999;
+  opacity: 0;
+  pointer-events: none;
+  transition: width .25s ease, opacity .2s ease;
+}
+#navProgress.active { opacity: 1; }
+#navProgress.done    { opacity: 0; transition: width .2s ease, opacity .3s ease .1s; }
+
+/* Fade halus saat #content diganti antar-halaman — konten lama meredup
+   sedikit sebelum ditukar, konten baru muncul tanpa "pop" mendadak.
+   Durasi sengaja singkat (tidak menahan render, cuma kosmetik). */
+#content {
+  transition: opacity .12s ease;
+}
+#content.content-fade-out {
+  opacity: 0.4;
+}

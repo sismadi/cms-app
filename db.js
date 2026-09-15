@@ -76,6 +76,31 @@ async function apiPublicSend(method, params, body) {
     return resBody;
 }
 
+// ============================================================
+// [PERF] Cache in-memory per tabel — db.all() dipanggil berulang kali
+// oleh banyak resolver (menu, dashboard, halaman publik, dst.) untuk
+// tabel yang sama dalam waktu berdekatan. Tanpa cache, tiap navigasi
+// menunggu fetch penuh lagi walau datanya belum berubah, itu salah
+// satu sumber "jeda terasa" saat pindah halaman. Cache ini HANYA hidup
+// selama sesi tab (di memori, bukan localStorage) dan otomatis
+// dibuang lewat invalidateTable() setiap ada insert/update/remove —
+// jadi tidak pernah menampilkan data basi setelah CRUD.
+// ============================================================
+const _tableCache = new Map(); // key: "table:cmsId" -> { data, ts }
+const CACHE_TTL_MS = 30_000; // jaga-jaga kalau data berubah dari sesi/tab lain
+
+function cacheKey(table, cmsId) {
+    return cmsId ? `${table}:${cmsId}` : table;
+}
+
+/** Buang entri cache untuk satu tabel (semua cmsId, atau satu cmsId spesifik). */
+function invalidateTable(table, cmsId) {
+    if (cmsId !== undefined) { _tableCache.delete(cacheKey(table, cmsId)); return; }
+    for (const key of _tableCache.keys()) {
+        if (key === table || key.startsWith(`${table}:`)) _tableCache.delete(key);
+    }
+}
+
 function activeCmsId() {
     const user = (typeof auth !== 'undefined') ? auth.currentUser() : null;
     return user?.cmsId || null;
@@ -91,7 +116,14 @@ const db = {
     async all(table) {
         const params = { table };
         if (SCOPED_TABLES.has(table)) params.cmsId = requireCms();
-        return apiGet(params);
+
+        const key = cacheKey(table, params.cmsId);
+        const hit = _tableCache.get(key);
+        if (hit && (Date.now() - hit.ts) < CACHE_TTL_MS) return hit.data;
+
+        const data = await apiGet(params);
+        _tableCache.set(key, { data, ts: Date.now() });
+        return data;
     },
 
     async find(table, predicate) {
@@ -112,19 +144,24 @@ const db = {
             body.cmsId = c;
             params.cmsId = c;
         }
-        return apiSend('POST', params, body);
+        const result = await apiSend('POST', params, body);
+        invalidateTable(table, params.cmsId);
+        return result;
     },
 
     async update(table, id, patch) {
         const params = { table, id };
         if (SCOPED_TABLES.has(table)) params.cmsId = requireCms();
-        return apiSend('PATCH', params, patch);
+        const result = await apiSend('PATCH', params, patch);
+        invalidateTable(table, params.cmsId);
+        return result;
     },
 
     async remove(table, id) {
         const params = { table, id };
         if (SCOPED_TABLES.has(table)) params.cmsId = requireCms();
         await apiSend('DELETE', params);
+        invalidateTable(table, params.cmsId);
         return true;
     },
 
@@ -139,7 +176,14 @@ const db = {
     async allForCms(table, cmsId) {
         const params = { table };
         if (SCOPED_TABLES.has(table)) params.cmsId = cmsId;
-        return apiGet(params);
+
+        const key = cacheKey(table, params.cmsId);
+        const hit = _tableCache.get(key);
+        if (hit && (Date.now() - hit.ts) < CACHE_TTL_MS) return hit.data;
+
+        const data = await apiGet(params);
+        _tableCache.set(key, { data, ts: Date.now() });
+        return data;
     },
 
     async insertForCms(table, cmsId, row) {
@@ -149,13 +193,30 @@ const db = {
             body.cmsId = cmsId;
             params.cmsId = cmsId;
         }
-        return apiSend('POST', params, body);
+        const result = await apiSend('POST', params, body);
+        invalidateTable(table, cmsId);
+        return result;
     },
 
     // --- Tabel `cms` sendiri TIDAK di-scope (global) ---
-    async allCms() { return apiGet({ table: 'cms' }); },
-    async insertCms(row) { return apiSend('POST', { table: 'cms' }, row); },
-    async updateCms(id, patch) { return apiSend('PATCH', { table: 'cms', id }, patch); },
+    async allCms() {
+        const key = cacheKey('cms');
+        const hit = _tableCache.get(key);
+        if (hit && (Date.now() - hit.ts) < CACHE_TTL_MS) return hit.data;
+        const data = await apiGet({ table: 'cms' });
+        _tableCache.set(key, { data, ts: Date.now() });
+        return data;
+    },
+    async insertCms(row) {
+        const result = await apiSend('POST', { table: 'cms' }, row);
+        invalidateTable('cms');
+        return result;
+    },
+    async updateCms(id, patch) {
+        const result = await apiSend('PATCH', { table: 'cms', id }, patch);
+        invalidateTable('cms');
+        return result;
+    },
 
     // --- Data publik (beranda / profil CMS / artikel + komentar) ---
     async publicHome() { return apiPublicGet({ view: 'home' }); },

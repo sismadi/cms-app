@@ -6,10 +6,16 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5">
     <meta name="robots" content="noindex">
     <title>Piawai Blog | Dasbor</title>
+    <!-- [PERF] Preconnect ke origin API — lihat catatan yang sama di index.html -->
+    <link rel="preconnect" href="https://cms-api.piawai.workers.dev">
+    <link rel="dns-prefetch" href="https://cms-api.piawai.workers.dev">
     <link rel="stylesheet" type="text/css" href="/style.css">
     <link rel="stylesheet" type="text/css" href="/svg.css">
 </head>
 <body>
+
+  <!-- [PERF] Progress bar navigasi tipis — lihat web.startProgress/finishProgress di engine.js -->
+  <div id="navProgress"></div>
 
   <div class="main" id="body">
     <div id="stickyHeaderWrap">
@@ -74,7 +80,7 @@ function renderMenu() {
 
     navLinks.innerHTML = siteConfig
         .filter(p => p.menu && visible(p))
-        .map(p => `<a href="/${p.slug}" onclick="return web.navigate('${p.slug}')">${p.label}</a>`)
+        .map(p => `<a href="/${p.slug}" onclick="web.navigate('${p.slug}'); return false;">${p.label}</a>`)
         .join('\n');
 
     if (typeof auth !== 'undefined') auth.renderAuthUI();

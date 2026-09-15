@@ -10,16 +10,24 @@
          Karena semua rute lewat query string di satu file, tidak ada lagi
          pembagian "app.html vs index.html" seperti versi Worker sebelumnya. -->
     <title>Piawai CMS</title>
+    <!-- [PERF] Preconnect ke origin API (dipisah dari frontend, lihat db.js) —
+         browser membuka koneksi DNS+TLS lebih awal, jadi fetch data halaman
+         pertama tidak menunggu handshake baru saat itu juga. -->
+    <link rel="preconnect" href="https://cms-api.piawai.workers.dev">
+    <link rel="dns-prefetch" href="https://cms-api.piawai.workers.dev">
     <link rel="stylesheet" type="text/css" href="style.css">
     <link rel="stylesheet" type="text/css" href="svg.css">
 </head>
 <body>
 
+  <!-- [PERF] Progress bar navigasi tipis — lihat web.startProgress/finishProgress di engine.js -->
+  <div id="navProgress"></div>
+
   <div class="main" id="body">
     <div id="stickyHeaderWrap">
     <div class="row header">
         <div class="kiri">
-            <a href="/" onclick="return web.navigate({page:'home'})" style="color:inherit;text-decoration:none;">
+            <a href="/" onclick="web.navigate({page:'home'}); return false;" style="color:inherit;text-decoration:none;">
                 <span class="orange">Piawai CMS</span>
                 <span class="orange sub"></span>
             </a>
@@ -78,7 +86,7 @@ function renderMenu() {
 
     navLinks.innerHTML = siteConfig
         .filter(p => p.menu && visible(p))
-        .map(p => `<a href="${web.href(p.slug)}" onclick="return web.navigate('${p.slug}')">${p.label}</a>`)
+        .map(p => `<a href="${web.href(p.slug)}" onclick="web.navigate('${p.slug}'); return false;">${p.label}</a>`)
         .join('\n');
 
     if (typeof auth !== 'undefined') auth.renderAuthUI();

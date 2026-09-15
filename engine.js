@@ -180,6 +180,15 @@ const web = {
     navigate: async function (target) {
         this.closeDrawer();
 
+        // [PERF] Guard anti race-condition: klik cepat antar-halaman bisa
+        // membuat fetch dari navigasi LAMA baru selesai SETELAH navigasi BARU
+        // sudah dimulai, lalu menimpa konten yang sudah benar dengan konten
+        // dari rute lama ("kedip" balik ke halaman sebelumnya). Tiap panggilan
+        // navigate() mendapat nomor urut sendiri; hanya panggilan TERBARU yang
+        // boleh menulis ke DOM / history / title di akhir.
+        const mySeq = ++this._navSeq;
+        web.startProgress();
+
         // target bisa: undefined (baca dari URL saat ini, lihat
         // parseLocationParams), string legacy ("dashboard",
         // "editor/post_123", "artikel/kode/slug"), atau object
@@ -187,7 +196,6 @@ const web = {
         let params = resolveNavParams(target);
         if (!params) params = parseLocationParams();
         const targetSlug = params.page;
-        this.currentParams = params;
 
         let pageData = [];
         const resolverName = this.routes[targetSlug];
@@ -211,7 +219,13 @@ const web = {
             pageData = [{ section: 'titleHero', title: 'Terjadi Kesalahan', description: err.message }];
         }
 
+        // Navigasi lain sudah dimulai selagi resolver di atas menunggu fetch —
+        // hasil ini sudah basi, jangan sentuh DOM/history/title sama sekali.
+        if (mySeq !== this._navSeq) return false;
+
+        this.currentParams = params;
         await ui.render('content', pageData);
+        web.finishProgress();
 
         if (target !== undefined) {
             const qs = buildQueryString(params);
@@ -224,6 +238,37 @@ const web = {
         web.gebi('navLinks')?.classList.remove('active');
         document.querySelectorAll('.nav-parent.open').forEach(el => el.classList.remove('open'));
         return false;
+    },
+
+    _navSeq: 0,
+
+    // ------------------------------------------------------------
+    // PROGRESS BAR — garis tipis di atas halaman selama navigasi masih
+    // menunggu fetch data, supaya jeda terasa "sedang memuat" alih-alih
+    // diam/kedip. Murni kosmetik, tidak menahan apa pun.
+    // ------------------------------------------------------------
+    _progressTimer: null,
+    startProgress: function () {
+        const bar = this.gebi('navProgress');
+        if (!bar) return;
+        clearTimeout(this._progressTimer);
+        bar.classList.remove('done');
+        bar.style.transition = 'none';
+        bar.style.width = '0%';
+        // Paksa reflow supaya transisi berikutnya dari 0% benar-benar animasi.
+        void bar.offsetWidth;
+        bar.style.transition = '';
+        bar.classList.add('active');
+        requestAnimationFrame(() => { bar.style.width = '80%'; });
+    },
+    finishProgress: function () {
+        const bar = this.gebi('navProgress');
+        if (!bar) return;
+        bar.style.width = '100%';
+        this._progressTimer = setTimeout(() => {
+            bar.classList.remove('active');
+            bar.classList.add('done');
+        }, 150);
     },
 
     /** Buka/tutup submenu dropdown (dipakai lewat klik, terutama di mobile;
@@ -390,7 +435,7 @@ const components = {
                     <em>${d.tagline || ''}</em> &mdash; ${d.description || ''}<br><br>
                     ${(d.badges || []).map(b => `<span class="badge">${b}</span>`).join(' ')}
                     <br><br>
-                    ${d.cta ? `<a href="${web.href(d.cta.link)}" onclick="return web.navigate('${d.cta.link}')" class="btn-cta">${d.cta.text}</a>` : ''}
+                    ${d.cta ? `<a href="${web.href(d.cta.link)}" onclick="web.navigate('${d.cta.link}'); return false;" class="btn-cta">${d.cta.text}</a>` : ''}
                 </div>
                 <div class="col-1-3 artikel">${media}</div>
             </div>`;
@@ -497,7 +542,17 @@ const ui = {
             const rendered = await Promise.all(
                 dataArray.map(d => Promise.resolve(components[d.section]?.(d) || ''))
             );
+            // [PERF] Fade halus saat konten berganti: turunkan opacity sesaat
+            // SEBELUM swap innerHTML, lalu naikkan lagi setelah swap. Ini beda
+            // dari "loading spinner" — konten lama tidak hilang mendadak, dan
+            // konten baru tidak "pop" tiba-tiba, jadi transisi terasa mulus
+            // meski data sudah siap secepat mungkin (bukan animasi buatan yang
+            // sengaja memperlambat).
+            el.classList.add('content-fade-out');
+            // Satu frame supaya browser sempat menerapkan opacity sebelum konten diganti.
+            await new Promise(r => requestAnimationFrame(r));
             el.innerHTML = rendered.join('');
+            el.classList.remove('content-fade-out');
         }
     },
 };
