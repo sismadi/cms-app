@@ -15,7 +15,7 @@ async function resolveCms() {
         kodeCms: c.kodeCms,
         status: c.status === 'aktif' ? '&#9679; Aktif' : '&#9675; Nonaktif',
         dibuat: c.createdAt ? new Date(c.createdAt).toLocaleDateString('id-ID') : '-',
-        aksi: `<a href="?profile/${c.kodeCms}" target="_blank" rel="noopener">Lihat</a>`
+        aksi: `<a href="${web.href(`profile/${c.kodeCms}`)}" target="_blank" rel="noopener">Lihat</a>`
             + ` &middot; <a href="javascript:void(0)" onclick="cmsPage.toggleStatus('${c.id}','${c.status}')">${c.status === 'aktif' ? 'Nonaktifkan' : 'Aktifkan'}</a>`,
     }));
 

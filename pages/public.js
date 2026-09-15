@@ -36,10 +36,10 @@ function fmtTanggal(iso) {
 /** Link ke halaman publik lain — pakai href dalam bentuk URL "cantik"
  *  (lihat PRETTY_PUBLIC_ROUTES di engine.js) + onclick SPA nav. */
 function profileLink(kode, label) {
-    return `<a href="?profile/${esc(kode)}" onclick="return web.navigate({page:'profile',user:'${kode}'})">${label}</a>`;
+    return `<a href="${web.href({page:'profile', user:kode})}" onclick="return web.navigate({page:'profile',user:'${kode}'})">${label}</a>`;
 }
 function artikelLink(kode, slug, label) {
-    return `<a href="?user/${esc(kode)}/${esc(slug)}" onclick="return web.navigate({page:'artikel',user:'${kode}',slug:'${slug}'})">${label}</a>`;
+    return `<a href="${web.href({page:'artikel', user:kode, slug})}" onclick="return web.navigate({page:'artikel',user:'${kode}',slug:'${slug}'})">${label}</a>`;
 }
 
 // ------------------------------------------------------------

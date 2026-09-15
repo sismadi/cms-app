@@ -5,10 +5,10 @@
     <meta name="description" content="Piawai CMS — platform CMS multi-penulis. Baca artikel dari berbagai penulis, atau masuk untuk mengelola CMS Anda sendiri.">
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5">
     <!-- Shell tunggal ini sekarang menyajikan halaman PUBLIK (beranda,
-         ?profile/<kodeCms>, ?user/<kodeCms>/<slug>) DAN admin (?page=login/
-         dashboard/dst) — lihat engine.js & pages/public.js. Karena semua
-         rute lewat query string di satu file, tidak ada lagi pembagian
-         "app.html vs index.html" seperti versi Worker sebelumnya. -->
+         ?profile/<kodeCms>, ?user/<kodeCms>/<slug>) DAN admin (?login,
+         ?dashboard, ?editor/<id>, dst) — lihat engine.js & pages/public.js.
+         Karena semua rute lewat query string di satu file, tidak ada lagi
+         pembagian "app.html vs index.html" seperti versi Worker sebelumnya. -->
     <title>Piawai CMS</title>
     <link rel="stylesheet" type="text/css" href="style.css">
     <link rel="stylesheet" type="text/css" href="svg.css">
@@ -78,7 +78,7 @@ function renderMenu() {
 
     navLinks.innerHTML = siteConfig
         .filter(p => p.menu && visible(p))
-        .map(p => `<a href="?page=${p.slug}" onclick="return web.navigate('${p.slug}')">${p.label}</a>`)
+        .map(p => `<a href="${web.href(p.slug)}" onclick="return web.navigate('${p.slug}')">${p.label}</a>`)
         .join('\n');
 
     if (typeof auth !== 'undefined') auth.renderAuthUI();

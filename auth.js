@@ -108,7 +108,7 @@ const auth = {
                    <span class="auth-name">${user.name}${user.role !== 'superadmin' ? ' &middot; ' + (user.cmsNama || '') : ''}</span>
                    <span class="badge auth-role">${roleLabel(user.role)}</span>
                </span>
-               ${user.role !== 'superadmin' ? `<a class="slcBtn" href="?profile/${user.cmsKode}" target="_blank" rel="noopener">Lihat CMS</a>` : ''}
+               ${user.role !== 'superadmin' ? `<a class="slcBtn" href="${web.href(`profile/${user.cmsKode}`)}" target="_blank" rel="noopener">Lihat CMS</a>` : ''}
                <button class="slcBtn auth-logout" onclick="auth.logout()">Keluar</button>`
             : `<a href="javascript:void(0)" onclick="web.navigate('login')" class="auth-chip">
                    <i class="di-lock img-24"></i>

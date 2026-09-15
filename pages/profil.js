@@ -21,7 +21,7 @@ async function resolveProfil() {
         {
             section: 'titleHero',
             title: 'Profil CMS',
-            description: `Alamat CMS: <a href="?profile/${cms.kodeCms}" target="_blank" rel="noopener">Lihat CMS publik (${cms.kodeCms})</a> (kode CMS tidak dapat diubah).`,
+            description: `Alamat CMS: <a href="${web.href(`profile/${cms.kodeCms}`)}" target="_blank" rel="noopener">Lihat CMS publik (${cms.kodeCms})</a> (kode CMS tidak dapat diubah).`,
         },
         {
             section: 'articleFull',

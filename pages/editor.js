@@ -19,7 +19,7 @@ async function resolveEditor(postId) {
     }
 
     const isEdit = !!post;
-    const previewUrl = post && post.status === 'publish' ? `?user/${user.cmsKode}/${post.slug}` : null;
+    const previewUrl = post && post.status === 'publish' ? web.href(`artikel/${user.cmsKode}/${post.slug}`) : null;
 
     return [
         {

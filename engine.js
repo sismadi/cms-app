@@ -18,44 +18,55 @@
 // pages/*.js) — resolver mengembalikan array blok { section, ...data }
 // yang dirender oleh `ui.render()` lewat `components[section](data)`.
 //
-// DUA bentuk query string dipakai berdampingan (lihat parseLocationParams
-// / buildQueryString di bawah):
-//   - Rute PUBLIK (home, profile, artikel) pakai bentuk "cantik" —
-//     query string yang diisi segmen mirip path, BUKAN pasangan
-//     key=value, supaya alamat CMS tetap enak dibaca & dibagikan:
-//       cms.piawai.id/                              -> beranda
-//       cms.piawai.id/?profile/<kodeCms>             -> profil CMS milik <kodeCms>
-//       cms.piawai.id/?user/<kodeCms>/<slug>         -> 1 artikel
-//     Ini TETAP query string murni (path selalu "/"), jadi hosting
-//     statis mana pun tetap menyajikan index.html yang sama tanpa
-//     rewrite apa pun — hanya *isi* query-nya yang dibuat mirip path.
-//   - Rute ADMIN (login, dashboard, editor, dst.) tetap format lama
-//     `?page=slug&param=nilai`, karena tidak perlu dibagikan/diindeks.
+// SATU bentuk query string untuk SEMUA rute (lihat parseLocationParams /
+// buildQueryString di bawah): query diisi SEGMEN mirip path, bukan
+// pasangan key=value, supaya alamat enak dibaca & dibagikan:
+//       cms.piawai.id/                          -> beranda
+//       cms.piawai.id/?profile/<kodeCms>        -> profil CMS
+//       cms.piawai.id/?user/<kodeCms>/<slug>    -> 1 artikel
+//       cms.piawai.id/?dashboard                -> dasbor (admin)
+//       cms.piawai.id/?editor/<idArtikel>       -> edit 1 artikel (admin)
+// Rute admin ikut bentuk yang sama, bukan `?page=dashboard` seperti
+// sebelumnya — tidak ada alasan teknis untuk membedakannya, dan satu
+// aturan lebih mudah diingat daripada dua.
+//
+// Ini TETAP query string murni (path selalu "/"), jadi hosting statis
+// mana pun tetap menyajikan index.html yang sama tanpa rewrite apa pun —
+// hanya *isi* query-nya yang dibuat mirip path.
+//
+// Aturannya seragam: segmen pertama = nama rute (`page`), segmen
+// berikutnya = nilai untuk ROUTE_PARAM_KEYS[page] secara berurutan.
+// Satu-satunya pengecualian adalah ROUTE_PREFIX di bawah, untuk rute
+// yang nama prefiks URL-nya sengaja beda dari nama rutenya.
 //
 // Format navigasi (backward-compatible dengan pemanggilan lama seperti
 // `web.navigate('editor/' + id)`):
-//   - string 'dashboard'            -> ?page=dashboard
-//   - string 'editor/POST_ID'       -> ?page=editor&id=POST_ID
+//   - string 'dashboard'            -> ?dashboard
+//   - string 'editor/POST_ID'       -> ?editor/POST_ID
 //   - string 'profile/kode-cms'     -> ?profile/kode-cms
 //   - string 'artikel/kode/slug'    -> ?user/kode/slug
 //   - object {page, ...params}      -> dipakai langsung sebagai query
 // ============================================================
 
-// Untuk rute string legacy "page/a/b", segmen setelah 'page' dipetakan
-// ke nama query param berikut, sesuai halaman. Default: ['id'].
+// Segmen setelah nama rute dipetakan ke nama param berikut, berurutan.
+// Rute yang tidak terdaftar di sini = tidak punya parameter URL.
 const ROUTE_PARAM_KEYS = {
     editor: ['id'],
     profile: ['user'],
     artikel: ['user', 'slug'],
 };
 
-// Rute publik yang memakai bentuk URL "cantik" (lihat catatan di atas).
-// `prefix` adalah segmen pertama setelah '?', `paramKeys` adalah urutan
-// nama param untuk segmen-segmen berikutnya.
-const PRETTY_PUBLIC_ROUTES = {
-    profile: { prefix: 'profile', paramKeys: ['user'] },
-    artikel: { prefix: 'user', paramKeys: ['user', 'slug'] },
+// Rute yang prefiks URL-nya BEDA dari nama rutenya. Dipakai hanya untuk
+// `artikel`, supaya alamat artikel terbaca sebagai milik seorang user
+// (`?user/wawan/judul`) alih-alih `?artikel/wawan/judul`. Selain yang
+// terdaftar di sini, prefiks = nama rute itu sendiri.
+const ROUTE_PREFIX = {
+    artikel: 'user',
 };
+
+const PREFIX_TO_PAGE = Object.fromEntries(
+    Object.entries(ROUTE_PREFIX).map(([page, prefix]) => [prefix, page])
+);
 
 /** Ubah target navigasi (string legacy ATAU object) jadi object query params {page, ...}. */
 function resolveNavParams(target) {
@@ -69,26 +80,27 @@ function resolveNavParams(target) {
 }
 
 /** Baca `window.location.search` saat ini jadi object params {page, ...}.
- *  Coba format publik "cantik" (?profile/x, ?user/x/y) dulu, baru jatuh
- *  ke format admin lama (?page=x&...) — lihat catatan arsitektur di atas. */
+ *  Menerima bentuk segmen (?dashboard, ?editor/ID, ?user/kode/slug) DAN
+ *  bentuk lama `?page=x&...`, supaya tautan/bookmark yang sudah terlanjur
+ *  tersebar sebelum perubahan ini tetap terbuka di halaman yang benar. */
 function parseLocationParams() {
     const raw = window.location.search.replace(/^\?/, '');
     if (!raw) return { page: 'home' };
 
-    const [prefix, ...segs] = raw.split('/');
-    const prettyEntry = Object.entries(PRETTY_PUBLIC_ROUTES).find(([, route]) => route.prefix === prefix);
-    if (prettyEntry) {
-        const [page, route] = prettyEntry;
-        const params = { page };
-        route.paramKeys.forEach((key, i) => {
-            if (segs[i] !== undefined) params[key] = decodeURIComponent(segs[i]);
-        });
+    // Bentuk lama: ada '=' di segmen pertama (mis. "page=dashboard&id=1").
+    if (raw.split('/')[0].includes('=')) {
+        const sp = new URLSearchParams(raw);
+        const params = Object.fromEntries(sp.entries());
+        if (!params.page) params.page = 'home';
         return params;
     }
 
-    const sp = new URLSearchParams(raw);
-    const params = Object.fromEntries(sp.entries());
-    if (!params.page) params.page = 'home';
+    const [prefix, ...segs] = raw.split('/');
+    const page = PREFIX_TO_PAGE[prefix] || prefix;
+    const params = { page };
+    (ROUTE_PARAM_KEYS[page] || []).forEach((key, i) => {
+        if (segs[i] !== undefined && segs[i] !== '') params[key] = decodeURIComponent(segs[i]);
+    });
     return params;
 }
 
@@ -97,20 +109,18 @@ function parseLocationParams() {
  *  string kosong untuk beranda). */
 function buildQueryString(params) {
     const { page, ...rest } = params;
-    if (page === 'home') return '';
+    if (!page || page === 'home') return '';
 
-    const pretty = PRETTY_PUBLIC_ROUTES[page];
-    if (pretty) {
-        const segs = pretty.paramKeys.map(key => encodeURIComponent(rest[key] ?? ''));
-        return `?${pretty.prefix}/${segs.join('/')}`;
-    }
+    const prefix = ROUTE_PREFIX[page] || page;
+    const segs = (ROUTE_PARAM_KEYS[page] || [])
+        .map(key => rest[key])
+        .map(v => (v === undefined || v === null ? '' : encodeURIComponent(v)));
 
-    const sp = new URLSearchParams();
-    sp.set('page', page);
-    Object.entries(rest).forEach(([k, v]) => {
-        if (v !== undefined && v !== null && v !== '') sp.set(k, v);
-    });
-    return `?${sp.toString()}`;
+    // Buang segmen kosong di ekor supaya '?editor' (artikel baru) tidak
+    // jadi '?editor/'.
+    while (segs.length && segs[segs.length - 1] === '') segs.pop();
+
+    return `?${[prefix, ...segs].join('/')}`;
 }
 
 const web = {
@@ -118,6 +128,15 @@ const web = {
     currentParams: {}, // query params rute yang sedang aktif — bisa dibaca resolver publik (lihat pages/public.js)
 
     gebi: (id) => document.getElementById(id),
+
+    /** Bangun href untuk sebuah target navigasi (string legacy atau object),
+     *  memakai aturan URL yang sama dengan pushState — supaya tidak ada
+     *  tempat yang merakit URL sendiri dan bisa ikut berubah kalau format
+     *  URL diubah lagi. Beranda jadi "/" (bukan string kosong) supaya
+     *  atribut href tetap valid. */
+    href: function (target) {
+        return buildQueryString(resolveNavParams(target) || {}) || '/';
+    },
 
     // ------------------------------------------------------------
     // FORM DRAWER — panel geser dari kanan, dipakai ulang oleh SEMUA
@@ -371,7 +390,7 @@ const components = {
                     <em>${d.tagline || ''}</em> &mdash; ${d.description || ''}<br><br>
                     ${(d.badges || []).map(b => `<span class="badge">${b}</span>`).join(' ')}
                     <br><br>
-                    ${d.cta ? `<a href="?${d.cta.link}" onclick="return web.navigate('${d.cta.link}')" class="btn-cta">${d.cta.text}</a>` : ''}
+                    ${d.cta ? `<a href="${web.href(d.cta.link)}" onclick="return web.navigate('${d.cta.link}')" class="btn-cta">${d.cta.text}</a>` : ''}
                 </div>
                 <div class="col-1-3 artikel">${media}</div>
             </div>`;

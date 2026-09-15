@@ -17,14 +17,14 @@ async function resolvePostingan() {
         views: p.views || 0,
         diperbarui: p.updatedAt ? new Date(p.updatedAt).toLocaleDateString('id-ID') : '-',
         aksi: `<a href="javascript:void(0)" onclick="web.navigate('editor/${p.id}')">Edit</a>`
-            + (p.status === 'publish' ? ` &middot; <a href="?user/${user.cmsKode}/${p.slug}" target="_blank" rel="noopener">Lihat</a>` : ''),
+            + (p.status === 'publish' ? ` &middot; <a href="${web.href(`artikel/${user.cmsKode}/${p.slug}`)}" target="_blank" rel="noopener">Lihat</a>` : ''),
     }));
 
     return [
         {
             section: 'titleHero',
             title: 'Artikel Saya',
-            description: `CMS Anda: <a href="?profile/${user.cmsKode}" target="_blank" rel="noopener">Lihat CMS publik (${user.cmsKode})</a>`,
+            description: `CMS Anda: <a href="${web.href(`profile/${user.cmsKode}`)}" target="_blank" rel="noopener">Lihat CMS publik (${user.cmsKode})</a>`,
         },
         {
             section: 'articleFull',
