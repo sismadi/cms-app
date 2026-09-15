@@ -197,6 +197,17 @@ const web = {
         if (!params) params = parseLocationParams();
         const targetSlug = params.page;
 
+        // PENTING: currentParams HARUS di-set SEBELUM resolver dipanggil.
+        // Resolver halaman publik (resolveArtikel/resolveProfile di
+        // pages/public.js) membaca web.currentParams.user & .slug secara
+        // sinkron di baris pertamanya. Kalau baris ini ada di bawah (setelah
+        // await resolver), resolver membaca params rute LAMA — atau {} kosong
+        // pada load pertama — sehingga kode CMS jadi '' dan API menjawab
+        // "CMS tidak ditemukan".
+        // Race-condition tetap aman: navigasi lama yang selesai belakangan
+        // keluar di guard mySeq di bawah dan tidak menimpa apa pun.
+        this.currentParams = params;
+
         let pageData = [];
         const resolverName = this.routes[targetSlug];
         // Resolver bisa terdaftar sebagai web.resolveXxx (mis. auth.js) ATAU
@@ -210,7 +221,9 @@ const web = {
                 // (mis. resolveEditor(postId)) — resolver baru (halaman
                 // publik) bisa juga baca web.currentParams langsung.
                 const subParam = ROUTE_PARAM_KEYS[targetSlug] ? params[ROUTE_PARAM_KEYS[targetSlug][0]] : undefined;
-                pageData = await Promise.resolve(resolverFn.call(this, subParam, targetSlug));
+                // Argumen ke-3 (params) dikirim eksplisit supaya resolver baru
+                // tidak perlu bergantung pada state global web.currentParams.
+                pageData = await Promise.resolve(resolverFn.call(this, subParam, targetSlug, params));
             } else {
                 pageData = [{ section: 'titleHero', title: 'Halaman Tidak Ditemukan', description: `Rute <strong>${targetSlug}</strong> tidak dikenal.` }];
             }
@@ -223,7 +236,6 @@ const web = {
         // hasil ini sudah basi, jangan sentuh DOM/history/title sama sekali.
         if (mySeq !== this._navSeq) return false;
 
-        this.currentParams = params;
         await ui.render('content', pageData);
         web.finishProgress();
 
