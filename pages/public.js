@@ -68,8 +68,8 @@ async function resolveHome() {
 // Profil CMS publik — ?profile/<kodeCms>
 // ------------------------------------------------------------
 web.routes.profile = 'resolveProfile';
-async function resolveProfile(kode) {
-    kode = (kode || web.currentParams.user || '').toLowerCase();
+async function resolveProfile(kode, _slug, params) {
+    kode = (kode || params?.user || web.currentParams.user || '').toLowerCase();
     let cms, posts;
     try { ({ cms, posts } = await db.publicProfile(kode)); }
     catch (e) { return [{ section: 'titleHero', title: 'CMS Tidak Ditemukan', description: esc(e.message) }]; }
@@ -99,9 +99,11 @@ async function resolveProfile(kode) {
 // Artikel + komentar — ?user/<kodeCms>/<slug>
 // ------------------------------------------------------------
 web.routes.artikel = 'resolveArtikel';
-async function resolveArtikel(_sub, _slug, notice) {
-    const kode = (web.currentParams.user || '').toLowerCase();
-    const slug = web.currentParams.slug || '';
+async function resolveArtikel(_sub, _slug, params, notice) {
+    // params dikirim langsung oleh web.navigate(); web.currentParams hanya
+    // cadangan untuk pemanggilan manual (mis. render ulang setelah komentar).
+    const kode = (params?.user || web.currentParams.user || '').toLowerCase();
+    const slug = params?.slug || web.currentParams.slug || '';
     let cms, post, komentar;
     try { ({ cms, post, komentar } = await db.publicArtikel(kode, slug)); }
     catch (e) { return [{ section: 'titleHero', title: 'Artikel Tidak Ditemukan', description: esc(e.message) }]; }
@@ -160,8 +162,9 @@ const publicPage = {
             return;
         }
         // Render ulang halaman artikel supaya komentar baru langsung terlihat.
-        web.currentParams = { page: 'artikel', user: kode, slug };
-        const pageData = await resolveArtikel(undefined, undefined, 'Komentar terkirim, terima kasih!');
+        const params = { page: 'artikel', user: kode, slug };
+        web.currentParams = params;
+        const pageData = await resolveArtikel(undefined, undefined, params, 'Komentar terkirim, terima kasih!');
         await ui.render('content', pageData);
         location.hash = 'komentar';
     },
