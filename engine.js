@@ -502,7 +502,15 @@ const ui = {
     },
 };
 
-window.addEventListener('load', () => web.navigate());
+// [PERF] Render pertama SENGAJA TIDAK dipicu dari 'load' di sini —
+// event itu baru menyala setelah SEMUA resource halaman selesai (termasuk
+// gambar, yang baru diketahui browser SETELAH konten di-render ke DOM —
+// jadi 'load' juga menunggu gambar yang isinya sendiri baru muncul
+// setelah render pertama, lingkaran yang bikin render tertunda lama
+// tanpa alasan). Pemicu render pertama sekarang ada di callback
+// loadPageScripts() (lihat index.html/app.html), langsung setelah semua
+// modul halaman siap — konten tampil sesegera mungkin, gambar & aset
+// lain menyusul di background tanpa menahan render.
 window.addEventListener('popstate', () => web.navigate());
 
 document.addEventListener('keydown', (e) => {

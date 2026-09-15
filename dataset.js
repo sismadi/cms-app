@@ -39,14 +39,21 @@ const pageFiles = [
     'pages/cms.js',
 ];
 
+// [PERF] Sebelumnya file dimuat SATU PER SATU (request ke-2 baru dikirim
+// setelah request ke-1 selesai, dst) — 6 file kecil jadi 6x round-trip
+// berurutan, padahal isinya independen (masing-masing cuma mengisi
+// web.routes.<slug> + fungsi resolver sendiri, lihat komentar di tiap
+// pages/*.js). Cross-call antar resolver (mis. resolveDashboard yang
+// memanggil resolveCms()) baru terjadi saat navigasi sungguhan, JAUH
+// setelah semua file ini selesai dimuat — jadi urutan muat aman diabaikan.
+// Sekarang semua file dikirim SEKALIGUS lewat Promise.all: total waktu
+// tunggu = request TERLAMA, bukan JUMLAH semua request.
 function loadPageScripts(files, done) {
-    let i = 0;
-    (function next() {
-        if (i >= files.length) { done(); return; }
+    Promise.all(files.map(src => new Promise((resolve) => {
         const s = document.createElement('script');
-        s.src = files[i++];
-        s.onload = next;
-        s.onerror = next; // tetap lanjut walau 1 file gagal, supaya halaman lain tidak ikut macet
+        s.src = src;
+        s.onload = resolve;
+        s.onerror = resolve; // tetap lanjut walau 1 file gagal, supaya halaman lain tidak ikut macet
         document.body.appendChild(s);
-    })();
+    }))).then(done);
 }

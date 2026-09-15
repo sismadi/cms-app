@@ -53,7 +53,7 @@ async function resolveHome() {
 
     const list = daftarCms.map(c => `
         <div class="col-1-3 artikel">
-            ${c.avatarUrl ? `<img src="${esc(c.avatarUrl)}" alt="${esc(c.nama)}" style="width:56px;height:56px;border-radius:50%;object-fit:cover;">` : ''}
+            ${c.avatarUrl ? `<img src="${esc(c.avatarUrl)}" alt="${esc(c.nama)}" width="56" height="56" loading="lazy" decoding="async" style="width:56px;height:56px;border-radius:50%;object-fit:cover;">` : ''}
             <span class="judul">${profileLink(c.kodeCms, esc(c.nama))}</span>
             <p>${esc(c.bio || '')}</p>
         </div>`).join('') || '<div class="col-1-1 artikel"><p>Belum ada CMS aktif.</p></div>';
@@ -85,7 +85,7 @@ async function resolveProfile(kode) {
     const header = `
         <div class="row page">
             <div class="artikel">
-                ${cms.avatarUrl ? `<img src="${esc(cms.avatarUrl)}" alt="${esc(cms.nama)}" style="width:72px;height:72px;border-radius:50%;object-fit:cover;">` : ''}
+                ${cms.avatarUrl ? `<img src="${esc(cms.avatarUrl)}" alt="${esc(cms.nama)}" width="72" height="72" loading="eager" fetchpriority="high" decoding="async" style="width:72px;height:72px;border-radius:50%;object-fit:cover;">` : ''}
                 <h1>${esc(cms.nama)}</h1>
                 <p>${esc(cms.bio || '')}</p>
             </div>
@@ -124,7 +124,7 @@ async function resolveArtikel(_sub, _slug, notice) {
                 <h1>${esc(post.judul)}</h1>
                 <p><small>${fmtTanggal(post.publishedAt)} ${post.kategori ? '&middot; ' + esc(post.kategori) : ''}</small></p>
                 ${tags}
-                ${post.coverImage ? `<p><img src="${esc(post.coverImage)}" alt="${esc(post.judul)}" style="max-width:100%;"></p>` : ''}
+                ${post.coverImage ? `<p><img src="${esc(post.coverImage)}" alt="${esc(post.judul)}" loading="eager" fetchpriority="high" decoding="async" style="max-width:100%;"></p>` : ''}
                 <div class="post-konten">${post.konten}</div>
                 <hr>
                 <h2 id="komentar">Komentar</h2>

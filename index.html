@@ -89,6 +89,7 @@ function renderMenu() {
 <script>
     loadPageScripts(pageFiles, () => {
         renderMenu();
+        web.navigate(); // [PERF] render pertama di sini, bukan di window.onload — lihat komentar di engine.js
     });
 </script>
 
