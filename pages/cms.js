@@ -15,8 +15,11 @@ async function resolveCms() {
         kodeCms: c.kodeCms,
         status: c.status === 'aktif' ? '&#9679; Aktif' : '&#9675; Nonaktif',
         dibuat: c.createdAt ? new Date(c.createdAt).toLocaleDateString('id-ID') : '-',
+        // [SECURITY] c.id/c.status disisipkan ke atribut onclick sebagai literal JS
+        // (bukan HTML biasa) — pakai JSON.stringify, bukan interpolasi string manual,
+        // supaya tanda kutip/backslash di nilainya tidak bisa memutus keluar dari handler.
         aksi: `<a href="${web.href(`profile/${c.kodeCms}`)}" target="_blank" rel="noopener">Lihat</a>`
-            + ` &middot; <a href="javascript:void(0)" onclick="cmsPage.toggleStatus('${c.id}','${c.status}')">${c.status === 'aktif' ? 'Nonaktifkan' : 'Aktifkan'}</a>`,
+            + ` &middot; <a href="javascript:void(0)" onclick='cmsPage.toggleStatus(${JSON.stringify(c.id)},${JSON.stringify(c.status)})'>${c.status === 'aktif' ? 'Nonaktifkan' : 'Aktifkan'}</a>`,
     }));
 
     return [
@@ -29,6 +32,11 @@ async function resolveCms() {
             tableOpts: {
                 visibleKeys: ['nama', 'kodeCms', 'status', 'dibuat', 'aksi'],
                 labels: { nama: 'Nama', kodeCms: 'Kode/URL', status: 'Status', dibuat: 'Dibuat', aksi: 'Aksi' },
+                // [SECURITY] Hanya 'aksi' yang boleh raw HTML (tombol Lihat/Aktifkan).
+                // nama & kodeCms diisi bebas oleh pemilik CMS saat registrasi —
+                // WAJIB di-escape (default renderTable) supaya tidak jadi stored XSS
+                // yang jalan di sesi superadmin. Lihat catatan di engine.js.
+                rawKeys: ['aksi'],
             },
             emptyText: 'Belum ada CMS terdaftar.',
         },

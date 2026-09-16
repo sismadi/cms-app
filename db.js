@@ -20,7 +20,26 @@
 // di akhir. Contoh: 'https://cms-api.namaakun.workers.dev'
 const API_BASE = 'https://cms-api.piawai.workers.dev';
 
-const SCOPED_TABLES = new Set(['users', 'post', 'komentar']);
+const SCOPED_TABLES = new Set(['post']); // `users` & `komentar` tidak lagi diakses lewat /api
+
+// ============================================================
+// [SECURITY] Token sesi. Backend (cms-api) sekarang menurunkan cmsId &
+// role dari token bertanda tangan ini, BUKAN dari query string — jadi
+// mengubah cmsId di localStorage tidak lagi membuka data CMS lain.
+// cmsId tetap dikirim hanya untuk kunci cache di sisi klien.
+// ============================================================
+function authHeaders() {
+    const t = (typeof auth !== 'undefined') ? auth.token() : null;
+    return t ? { Authorization: `Bearer ${t}` } : {};
+}
+
+/** 401 = sesi habis/dicabut server -> bersihkan sesi lokal & kembali ke login. */
+function handleUnauthorized() {
+    if (typeof auth !== 'undefined') {
+        try { localStorage.removeItem(auth.SESSION_KEY); } catch (e) {}
+    }
+    if (typeof web !== 'undefined' && typeof web.navigate === 'function') web.navigate('login');
+}
 
 /** Bangun query string dari objek {key: value}, buang key yang kosong/undefined. */
 function qs(params) {
@@ -33,7 +52,8 @@ function qs(params) {
 }
 
 async function apiGet(params) {
-    const res = await fetch(`${API_BASE}/api${qs(params)}`);
+    const res = await fetch(`${API_BASE}/api${qs(params)}`, { headers: authHeaders() });
+    if (res.status === 401) { handleUnauthorized(); throw new Error('Sesi berakhir, silakan masuk kembali.'); }
     if (!res.ok) {
         let msg = `GET /api gagal (${res.status})`;
         try { const j = await res.json(); if (j?.error) msg = j.error; } catch (e) {}
@@ -45,9 +65,10 @@ async function apiGet(params) {
 async function apiSend(method, params, body) {
     const res = await fetch(`${API_BASE}/api${qs(params)}`, {
         method,
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
         body: body !== undefined ? JSON.stringify(body) : undefined,
     });
+    if (res.status === 401) { handleUnauthorized(); throw new Error('Sesi berakhir, silakan masuk kembali.'); }
     if (res.status === 404) return null;
     if (!res.ok) {
         let msg = `${method} /api gagal (${res.status})`;
@@ -68,7 +89,7 @@ async function apiPublicGet(params) {
 async function apiPublicSend(method, params, body) {
     const res = await fetch(`${API_BASE}/public${qs(params)}`, {
         method,
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
         body: body !== undefined ? JSON.stringify(body) : undefined,
     });
     const resBody = await res.json().catch(() => null);
@@ -172,31 +193,11 @@ const db = {
         return this.update(table, existing.id, row);
     },
 
-    // --- Jalur eksplisit lintas-CMS, HANYA untuk auth.js (login/registrasi) ---
-    async allForCms(table, cmsId) {
-        const params = { table };
-        if (SCOPED_TABLES.has(table)) params.cmsId = cmsId;
-
-        const key = cacheKey(table, params.cmsId);
-        const hit = _tableCache.get(key);
-        if (hit && (Date.now() - hit.ts) < CACHE_TTL_MS) return hit.data;
-
-        const data = await apiGet(params);
-        _tableCache.set(key, { data, ts: Date.now() });
-        return data;
-    },
-
-    async insertForCms(table, cmsId, row) {
-        const body = { ...row };
-        const params = { table };
-        if (SCOPED_TABLES.has(table)) {
-            body.cmsId = cmsId;
-            params.cmsId = cmsId;
-        }
-        const result = await apiSend('POST', params, body);
-        invalidateTable(table, cmsId);
-        return result;
-    },
+    // --- CATATAN: allForCms()/insertForCms() DIHAPUS ---
+    // Dulu dipakai auth.js untuk menarik SELURUH tabel `users` (termasuk
+    // password) ke browser lalu mencocokkan di JS. Backend sekarang
+    // memblokir tabel `users` dari /api sepenuhnya; login & registrasi
+    // pindah ke endpoint server (lihat auth.login / auth.register).
 
     // --- Tabel `cms` sendiri TIDAK di-scope (global) ---
     async allCms() {
@@ -217,6 +218,10 @@ const db = {
         invalidateTable('cms');
         return result;
     },
+
+    // --- Autentikasi (diproses SEPENUHNYA di server) ---
+    async login(payload) { return apiPublicSend('POST', { view: 'login' }, payload); },
+    async register(payload) { return apiPublicSend('POST', { view: 'register' }, payload); },
 
     // --- Data publik (beranda / profil CMS / artikel + komentar) ---
     async publicHome() { return apiPublicGet({ view: 'home' }); },

@@ -16,7 +16,7 @@ async function resolvePostingan() {
         status: p.status === 'publish' ? '&#9679; Publish' : '&#9675; Draft',
         views: p.views || 0,
         diperbarui: p.updatedAt ? new Date(p.updatedAt).toLocaleDateString('id-ID') : '-',
-        aksi: `<a href="javascript:void(0)" onclick="web.navigate('editor/${p.id}')">Edit</a>`
+        aksi: `<a href="javascript:void(0)" onclick='web.navigate("editor/" + ${JSON.stringify(p.id)})'>Edit</a>`
             + (p.status === 'publish' ? ` &middot; <a href="${web.href(`artikel/${user.cmsKode}/${p.slug}`)}" target="_blank" rel="noopener">Lihat</a>` : ''),
     }));
 
@@ -38,6 +38,9 @@ async function resolvePostingan() {
             tableOpts: {
                 visibleKeys: ['judul', 'status', 'views', 'diperbarui', 'aksi'],
                 labels: { judul: 'Judul', status: 'Status', views: 'Dilihat', diperbarui: 'Diperbarui', aksi: 'Aksi' },
+                // [SECURITY] judul artikel adalah input bebas pengguna — harus di-escape
+                // (default renderTable). Hanya 'aksi' yang raw HTML.
+                rawKeys: ['aksi'],
             },
             emptyText: 'Belum ada artikel. Mulai menulis yang pertama!',
         },

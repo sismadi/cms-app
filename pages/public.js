@@ -27,6 +27,90 @@ function esc(s) {
     }[c]));
 }
 
+// ============================================================
+// [SECURITY] Sanitasi HTML untuk `post.konten`.
+// ------------------------------------------------------------
+// editor.js sengaja mengizinkan penulis mengetik HTML dasar untuk isi
+// artikel (<p>, <strong>, <a>, dst — lihat label field 'konten'), dan
+// nilai itu dirender APA ADANYA lewat innerHTML di halaman publik
+// (`<div class="post-konten">${post.konten}</div>`). Ini rich-text yang
+// SAH untuk kasus normal, TAPI kalau tidak disaring, ini juga jadi jalan
+// masuk stored XSS langsung ke pengunjung publik: satu akun penulis yang
+// nakal atau kena bobol saja cukup untuk menyerang SEMUA pembaca artikel
+// itu (curi sesi admin lain lewat localStorage, redirect, cryptojacking,
+// dsb).
+//
+// sanitizeHtml() memakai DAFTAR PUTIH (allowlist) tag & atribut — bukan
+// daftar hitam — karena daftar hitam nyaris selalu bisa dilubangi (mis.
+// event handler ada puluhan nama: onerror, onload, onpointerover, dst).
+// Prinsipnya: apa pun yang tidak ada di daftar putih DIBUANG, bukan
+// "dicoba dibersihkan".
+//
+// CATATAN PENTING: ini sanitasi di SISI KLIEN, dijalankan tiap kali
+// artikel ditampilkan — jadi tetap melindungi pengunjung walau data
+// "kotor" berhasil masuk ke database lewat jalur lain (mis. seseorang
+// memanggil API backend langsung, melewati form editor). Tapi ini BUKAN
+// pengganti validasi/sanitasi di backend (cms-api, repo terpisah) —
+// idealnya backend juga menyaring `konten` saat disimpan, supaya semua
+// konsumen API (bukan cuma frontend ini) ikut aman. Lihat SECURITY.md.
+// ============================================================
+const ALLOWED_TAGS = new Set([
+    'p', 'br', 'strong', 'b', 'em', 'i', 'u', 's', 'a', 'ul', 'ol', 'li',
+    'blockquote', 'h2', 'h3', 'h4', 'code', 'pre', 'span', 'img', 'figure', 'figcaption',
+]);
+const ALLOWED_ATTRS = {
+    a: new Set(['href', 'title']),
+    img: new Set(['src', 'alt', 'title', 'width', 'height', 'loading']),
+    '*': new Set(['class']),
+};
+const SAFE_URL_RE = /^(https?:|mailto:|tel:|\/|#)/i;
+
+function sanitizeHtml(html) {
+    const doc = new DOMParser().parseFromString(`<div>${String(html ?? '')}</div>`, 'text/html');
+    const root = doc.body.firstChild;
+    if (!root) return '';
+
+    (function walk(node) {
+        // Jalan mundur (childNodes berubah saat elemen dibuang) supaya index tetap aman.
+        for (let i = node.childNodes.length - 1; i >= 0; i--) {
+            const child = node.childNodes[i];
+
+            if (child.nodeType === Node.COMMENT_NODE) { node.removeChild(child); continue; }
+
+            if (child.nodeType === Node.ELEMENT_NODE) {
+                const tag = child.tagName.toLowerCase();
+
+                // script, style, iframe, object, embed, form, on*-handler apa pun,
+                // svg/math (vektor serangan lama di banyak sanitizer), dsb — SEMUA
+                // dibuang total (termasuk isinya) kalau bukan tag yang diizinkan.
+                if (!ALLOWED_TAGS.has(tag)) {
+                    node.removeChild(child);
+                    continue;
+                }
+
+                // Buang SEMUA atribut kecuali yang ada di daftar putih untuk tag ini.
+                // Ini otomatis membuang onclick/onerror/onload/style/dst tanpa perlu
+                // tahu nama setiap event handler yang ada di spec HTML.
+                const allowedForTag = ALLOWED_ATTRS[tag] || new Set();
+                Array.from(child.attributes).forEach(attr => {
+                    const name = attr.name.toLowerCase();
+                    const isAllowed = allowedForTag.has(name) || ALLOWED_ATTRS['*'].has(name);
+                    if (!isAllowed) { child.removeAttribute(attr.name); return; }
+                    // Untuk href/src, tolak skema berbahaya (javascript:, data:, vbscript:).
+                    if ((name === 'href' || name === 'src') && !SAFE_URL_RE.test(attr.value.trim())) {
+                        child.removeAttribute(attr.name);
+                    }
+                });
+                if (tag === 'a') child.setAttribute('rel', 'noopener noreferrer nofollow');
+
+                walk(child);
+            }
+        }
+    })(root);
+
+    return root.innerHTML;
+}
+
 function fmtTanggal(iso) {
     if (!iso) return '';
     try { return new Date(iso).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' }); }
@@ -127,35 +211,83 @@ async function resolveArtikel(_sub, _slug, params, notice) {
                 <p><small>${fmtTanggal(post.publishedAt)} ${post.kategori ? '&middot; ' + esc(post.kategori) : ''}</small></p>
                 ${tags}
                 ${post.coverImage ? `<p><img src="${esc(post.coverImage)}" alt="${esc(post.judul)}" loading="eager" fetchpriority="high" decoding="async" style="max-width:100%;"></p>` : ''}
-                <div class="post-konten">${post.konten}</div>
+                <div class="post-konten">${sanitizeHtml(post.konten)}</div>
                 <hr>
                 <h2 id="komentar">Komentar</h2>
                 ${noticeHtml}
                 <div id="komentarList">${komentarHtml}</div>
                 <h3>Tulis Komentar</h3>
-                <form class="dynamic-form" onsubmit="event.preventDefault(); publicPage.handleKomentarSubmit(this, '${kode}', '${slug}');">
-                    <div class="a-row"><label class="a-label">Nama <span style="color:var(--orange,#f90)">*</span></label><input type="text" name="nama" required></div>
-                    <div class="a-row"><label class="a-label">Email (opsional, tidak ditampilkan)</label><input type="email" name="email"></div>
-                    <div class="a-row"><label class="a-label">Komentar <span style="color:var(--orange,#f90)">*</span></label><textarea name="isi" rows="3" required></textarea></div>
-                    <button type="submit" class="slcBtn">Kirim Komentar</button>
-                </form>
+                ${komentarFormOrLoginPrompt(kode, slug)}
             </div>
         </div>`;
 
     return [{ section: 'rawHtml', html }];
 }
 
+// ============================================================
+// [SECURITY / FITUR] Komentar WAJIB login.
+// ------------------------------------------------------------
+// Sebelumnya siapa pun (tanpa akun) bisa mengirim komentar hanya dengan
+// mengetik nama bebas — ini memudahkan spam/penyamaran identitas, dan
+// tidak ada cara memverifikasi siapa yang benar-benar menulis komentar.
+// Sekarang form hanya ditampilkan untuk pengguna yang sudah login;
+// identitas (nama) diambil dari sesi, bukan diketik manual, supaya
+// komentar selalu bisa ditelusuri ke akun yang mengirimnya.
+//
+// [KETERBATASAN YANG PERLU DIKETAHUI] `auth` di app ini menyimpan sesi
+// hanya di localStorage klien (lihat auth.js) — TIDAK ADA token sesi
+// bertanda tangan (mis. JWT) yang dikirim & diverifikasi backend. Jadi
+// pengecekan login di bawah ini mencegah pengguna BIASA berkomentar
+// tanpa akun lewat antarmuka ini, tapi TIDAK mencegah seseorang yang
+// memanggil endpoint backend (`/public?view=komentar`) secara langsung
+// dari mengaku sebagai siapa saja. Supaya "wajib login" benar-benar
+// ditegakkan di sisi server, backend (cms-api, repo terpisah) perlu
+// menerbitkan token sesi asli saat login dan memvalidasinya di endpoint
+// komentar — lihat SECURITY.md.
+// ============================================================
+function komentarFormOrLoginPrompt(kode, slug) {
+    const user = (typeof auth !== 'undefined') ? auth.currentUser() : null;
+    if (!user) {
+        return `<div class="info-card">
+            Silakan <a href="javascript:void(0)" onclick="publicPage.goLoginThenReturn('${kode}','${slug}')">masuk</a>
+            atau <a href="javascript:void(0)" onclick="web.navigate('register')">daftar</a> terlebih dahulu untuk menulis komentar.
+        </div>`;
+    }
+    return `
+        <form class="dynamic-form" onsubmit="event.preventDefault(); publicPage.handleKomentarSubmit(this, '${kode}', '${slug}');">
+            <div class="a-row"><label class="a-label">Nama</label><input type="text" value="${esc(user.name)}" disabled></div>
+            <div class="a-row"><label class="a-label">Komentar <span style="color:var(--orange,#f90)">*</span></label><textarea name="isi" rows="3" maxlength="2000" required></textarea></div>
+            <button type="submit" class="slcBtn">Kirim Komentar</button>
+        </form>`;
+}
+
 const publicPage = {
+    /** Simpan halaman artikel yang sedang dibuka, lalu arahkan ke /login.
+     *  Dipanggil balik oleh auth.js setelah login sukses (lihat
+     *  sessionStorage 'postLoginRedirect') supaya pengguna tidak perlu
+     *  mencari-cari lagi artikel yang tadi ingin dikomentari. */
+    goLoginThenReturn(kode, slug) {
+        try { sessionStorage.setItem('postLoginRedirect', JSON.stringify({ page: 'artikel', user: kode, slug })); }
+        catch (e) { /* localStorage/sessionStorage penuh atau diblokir — abaikan, login tetap jalan tanpa redirect balik */ }
+        web.navigate('login');
+    },
+
     /** Submit komentar lewat fetch (bukan <form method="POST"> biasa) —
      *  hosting statis tidak punya server untuk memproses form POST langsung,
      *  jadi ini WAJIB AJAX. Lihat catatan arsitektur di atas berkas ini. */
     async handleKomentarSubmit(form, kode, slug) {
-        const val = (name) => form.querySelector(`[name="${name}"]`)?.value.trim() ?? '';
-        const nama = val('nama'), email = val('email'), isi = val('isi');
+        const user = (typeof auth !== 'undefined') ? auth.currentUser() : null;
+        if (!user) { alert('Sesi Anda berakhir, silakan masuk kembali.'); web.navigate('login'); return; }
+
+        const isi = form.querySelector('[name="isi"]')?.value.trim() ?? '';
+        if (!isi) return;
+
         const btn = form.querySelector('button[type="submit"]');
         if (btn) { btn.disabled = true; btn.textContent = 'Mengirim...'; }
         try {
-            await db.publicKomentar(kode, slug, { nama, email, isi });
+            // nama diambil dari sesi (bukan field form) supaya tidak bisa dipalsukan
+            // lewat DevTools/edit-HTML manual sebelum submit.
+            await db.publicKomentar(kode, slug, { nama: user.name, userId: user.userId, isi });
         } catch (e) {
             alert(e.message);
             if (btn) { btn.disabled = false; btn.textContent = 'Kirim Komentar'; }
