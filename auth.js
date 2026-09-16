@@ -65,7 +65,7 @@
 //
 // (env.TURNSTILE_SECRET_KEY disimpan sebagai Worker secret, bukan di kode.)
 // ============================================================
-const TURNSTILE_SITE_KEY = '0x0000000000000000AA'; // TODO: ganti dengan Site Key asli dari dashboard Cloudflare Turnstile
+const TURNSTILE_SITE_KEY = '0x4AAAAAAE3gAZ9rV8pF0VMk'; // TODO: ganti dengan Site Key asli dari dashboard Cloudflare Turnstile
 
 function turnstileWidgetHtml() {
     return `<div class="a-row"><div class="cf-turnstile" data-sitekey="${TURNSTILE_SITE_KEY}" data-theme="light"></div></div>`;
