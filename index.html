@@ -17,10 +17,9 @@
     <link rel="dns-prefetch" href="https://cms-api.piawai.workers.dev">
     <link rel="stylesheet" type="text/css" href="style.css">
     <link rel="stylesheet" type="text/css" href="svg.css">
-    <!-- [SECURITY] Cloudflare Turnstile — captcha untuk form login & registrasi.
-         Lihat komentar lengkap (cara kerja + syarat verifikasi backend) di
-         auth.js, dekat deklarasi TURNSTILE_SITE_KEY. -->
-    <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+    <!-- [SECURITY] Captcha login/registrasi kini captcha matematika kustom
+         (soal diminta ke server, diverifikasi di server juga) — tidak ada
+         lagi script pihak ketiga yang perlu dimuat di sini. Lihat auth.js. -->
 </head>
 <body>
 

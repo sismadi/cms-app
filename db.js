@@ -186,13 +186,6 @@ const db = {
         return true;
     },
 
-    async upsertBy(table, matchFn, row) {
-        const rows = await this.all(table);
-        const existing = rows.find(matchFn);
-        if (!existing) return this.insert(table, row);
-        return this.update(table, existing.id, row);
-    },
-
     // --- CATATAN: allForCms()/insertForCms() DIHAPUS ---
     // Dulu dipakai auth.js untuk menarik SELURUH tabel `users` (termasuk
     // password) ke browser lalu mencocokkan di JS. Backend sekarang
@@ -208,11 +201,6 @@ const db = {
         _tableCache.set(key, { data, ts: Date.now() });
         return data;
     },
-    async insertCms(row) {
-        const result = await apiSend('POST', { table: 'cms' }, row);
-        invalidateTable('cms');
-        return result;
-    },
     async updateCms(id, patch) {
         const result = await apiSend('PATCH', { table: 'cms', id }, patch);
         invalidateTable('cms');
@@ -222,6 +210,9 @@ const db = {
     // --- Autentikasi (diproses SEPENUHNYA di server) ---
     async login(payload) { return apiPublicSend('POST', { view: 'login' }, payload); },
     async register(payload) { return apiPublicSend('POST', { view: 'register' }, payload); },
+
+    // --- Captcha matematika (lihat auth.js) — soal baru tiap dipanggil. ---
+    async getCaptcha() { return apiPublicGet({ view: 'captcha' }); },
 
     // --- Data publik (beranda / profil CMS / artikel + komentar) ---
     async publicHome() { return apiPublicGet({ view: 'home' }); },

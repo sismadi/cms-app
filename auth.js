@@ -22,58 +22,66 @@
 // Diulang juga di worker.js (SLUG_RE) sebagai jaring pengaman server-side.
 // ============================================================
 // ============================================================
-// [SECURITY] CAPTCHA (Cloudflare Turnstile) di login & registrasi.
+// [SECURITY] CAPTCHA matematika kustom di login & registrasi.
 // ------------------------------------------------------------
-// Backend app ini (cms-api) sudah di Cloudflare Workers, jadi Turnstile
-// paling pas: gratis, tidak melacak pengguna seperti reCAPTCHA, dan
-// verifikasinya tinggal satu panggilan `siteverify` dari Worker.
+// Menggantikan Cloudflare Turnstile: tidak ada script pihak ketiga
+// yang dimuat (jadi tidak bisa ter-block ad-blocker), tidak ada Site
+// Key untuk dikonfigurasi, dan verifikasinya tetap 100% di server
+// (lihat generateMathCaptcha/verifyMathCaptcha di worker.js, repo
+// cms-api) — bukan cuma dicek di JS sini.
 //
-// GANTI nilai di bawah dengan Site Key asli dari dashboard Cloudflare
-// (Turnstile > buat widget baru). Site Key BOLEH publik/terlihat di
-// frontend — yang RAHASIA adalah Secret Key, dan Secret Key itu
-// TIDAK PERNAH boleh ada di repo frontend ini; dia hanya dipakai di
-// sisi server (Worker cms-api) untuk memverifikasi token.
-//
-// [STATUS: SUDAH DIVERIFIKASI DI SERVER — sejak cms-api ter-hardening]
-// Backend kini memanggil `siteverify` di POST /public?view=login dan
-// ?view=register SEBELUM kredensial diproses, dan menolak permintaan
-// tanpa token captcha yang sah. Catatan historis di bawah dipertahankan
-// supaya alasan desainnya tetap terbaca.
+// Alur: sebelum form Masuk/Daftar dirender, kita minta soal ke server
+// (`db.getCaptcha()` -> GET /public?view=captcha), yang membalas
+// { challenge: "4 + 7 = ?", token }. `token` (bertanda tangan HMAC,
+// tidak berisi jawaban yang bisa dibaca tanpa verifikasi server)
+// ditaruh sebagai hidden input; jawaban pengguna dikirim sebagai
+// `captchaAnswer` bersama `captchaToken` ke endpoint login/register.
+// Backend yang memutuskan benar/salah — kode di sini HANYA menampilkan
+// soal dan mengumpulkan jawaban, sama seperti widget captcha lain.
 //
 // [SANGAT PENTING — INI BAGIAN YANG SERING TERLEWAT]
-// Widget Turnstile di bawah HANYA menghasilkan sebuah token di field
-// tersembunyi `cf-turnstile-response`. Token itu TIDAK MEMBUKTIKAN
-// apa pun sampai backend memverifikasinya lewat API
-// `https://challenges.cloudflare.com/turnstile/v0/siteverify` memakai
-// Secret Key. Kalau backend (cms-api, repo terpisah) tidak melakukan
-// verifikasi ini, maka captcha di sini CUMA HIASAN — bot yang
-// memanggil endpoint API langsung (tanpa lewat browser/frontend ini
-// sama sekali) akan tetap lolos, karena captcha di frontend hanya
-// mengatur apa yang TERLIHAT, bukan apa yang backend TERIMA.
-//
-// Contoh kode verifikasi yang perlu ditambahkan di worker.js (cms-api),
-// pada route POST /public?view=login dan /public?view=register, SEBELUM
-// memproses kredensial:
-//
-//   const token = body.turnstileToken;
-//   const verify = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
-//     method: 'POST',
-//     headers: { 'Content-Type': 'application/json' },
-//     body: JSON.stringify({ secret: env.TURNSTILE_SECRET_KEY, response: token }),
-//   }).then(r => r.json());
-//   if (!verify.success) return new Response(JSON.stringify({ error: 'Verifikasi captcha gagal.' }), { status: 400 });
-//
-// (env.TURNSTILE_SECRET_KEY disimpan sebagai Worker secret, bukan di kode.)
+// Kalau backend (cms-api, repo terpisah) tidak memverifikasi
+// `captchaToken`/`captchaAnswer`, maka captcha di sini CUMA HIASAN —
+// bot yang memanggil endpoint API langsung (tanpa lewat frontend ini
+// sama sekali) akan tetap lolos. Backend versi ini SUDAH melakukan
+// verifikasi itu (lihat worker.js), tapi kalau nanti backend diganti
+// atau di-fork, pastikan verifikasi itu tetap ada.
 // ============================================================
-const TURNSTILE_SITE_KEY = '0x4AAAAAAE3gAZ9rV8pF0VMk';
 
-function turnstileWidgetHtml() {
-    return `<div class="a-row"><div class="cf-turnstile" data-sitekey="${TURNSTILE_SITE_KEY}" data-theme="light"></div></div>`;
+/** Bangun HTML field captcha (raw, karena harus di dalam <form> yang sama
+ *  supaya form.querySelector(...) di JS bisa menemukan hidden token-nya —
+ *  lihat catatan `type:'raw'` di engine.js). `challenge` divalidasi format
+ *  ketat sebelum disisipkan, walau sumbernya backend sendiri (bukan input
+ *  pengguna), sebagai lapisan jaga-jaga tambahan. */
+function mathCaptchaFieldsHtml(challenge, token) {
+    const safeChallenge = /^\d{1,2} \+ \d{1,2} = \?$/.test(challenge) ? challenge : 'Soal captcha tidak valid';
+    return `<input type="hidden" class="js-captcha-token" name="captchaToken" value="${escHtml(token || '')}">
+        <div class="a-row">
+            <label class="a-label">Captcha: ${escHtml(safeChallenge)}</label>
+            <input type="number" class="js-captcha-answer" name="captchaAnswer" placeholder="Jawaban" required autocomplete="off">
+        </div>`;
 }
 
-/** Ambil token dari widget Turnstile yang sedang dirender di form ini. */
-function getTurnstileToken(form) {
-    return form.querySelector('[name="cf-turnstile-response"]')?.value || '';
+/** Ambil soal baru dari server dan render field captcha ke dalam form.
+ *  Dipakai saat form pertama dibuka DAN setelah percobaan gagal (supaya
+ *  token lama yang mungkin sudah kedaluwarsa/terpakai diganti yang baru). */
+async function renderMathCaptcha(form) {
+    const slot = form.querySelector('.js-captcha-slot');
+    if (!slot) return;
+    try {
+        const { challenge, token } = await db.getCaptcha();
+        slot.innerHTML = mathCaptchaFieldsHtml(challenge, token);
+    } catch (e) {
+        slot.innerHTML = `<div class="a-row"><span style="color:var(--red,#c00)">Gagal memuat captcha: ${escHtml(e.message)}</span></div>`;
+    }
+}
+
+/** Baca token + jawaban captcha yang sedang ditampilkan di form ini. */
+function readCaptcha(form) {
+    return {
+        captchaToken: form.querySelector('.js-captcha-token')?.value || '',
+        captchaAnswer: form.querySelector('.js-captcha-answer')?.value || '',
+    };
 }
 
 const auth = {
@@ -145,11 +153,11 @@ const auth = {
      * Yang kembali dari server hanya token sesi + data tampilan pengguna —
      * tidak pernah hash, tidak pernah daftar akun.
      */
-    async login(kodeCms, username, password, turnstileToken) {
+    async login(kodeCms, username, password, captcha) {
         const kode = String(kodeCms || '').trim().toLowerCase();
         if (!kode || !username || !password) return 'Kode CMS, username, dan password wajib diisi.';
         try {
-            const res = await db.login({ kodeCms: kode, username, password, turnstileToken });
+            const res = await db.login({ kodeCms: kode, username, password, ...captcha });
             this._saveSession(res);
             return null; // null = sukses
         } catch (e) {
@@ -163,14 +171,14 @@ const auth = {
      * captcha diverifikasi). Frontend tidak lagi membuat baris `users`
      * sendiri lewat CRUD generik.
      */
-    async register({ kodeCms, namaCms, bio, ownerName, username, password, turnstileToken }) {
+    async register({ kodeCms, namaCms, bio, ownerName, username, password, captchaToken, captchaAnswer }) {
         const kode = String(kodeCms || '').trim().toLowerCase();
         if (!kode || !namaCms || !ownerName || !username || !password) return 'Semua field bertanda * wajib diisi.';
         const slugErr = this.validateKodeCms(kode);
         if (slugErr) return slugErr;
         if (password.length < 8) return 'Password minimal 8 karakter.';
         try {
-            const res = await db.register({ kodeCms: kode, namaCms, bio: bio || '', ownerName, username, password, turnstileToken });
+            const res = await db.register({ kodeCms: kode, namaCms, bio: bio || '', ownerName, username, password, captchaToken, captchaAnswer });
             this._saveSession(res);
             return null;
         } catch (e) {
@@ -212,11 +220,11 @@ const auth = {
             return;
         }
 
-        // [SECURITY] Captcha diperiksa DI SINI dulu, sebelum memanggil login() —
-        // tapi ingat, ini cuma penjagaan UX (lihat catatan besar di atas file ini).
-        // Verifikasi yang SAH terjadi di backend lewat siteverify.
-        const captchaToken = getTurnstileToken(form);
-        if (!captchaToken) { alert('Mohon selesaikan verifikasi captcha terlebih dahulu.'); return; }
+        // [SECURITY] captchaToken/captchaAnswer dikirim apa adanya ke server —
+        // verifikasi yang SAH terjadi di backend (lihat verifyMathCaptcha di
+        // worker.js, repo cms-api), bukan di sini.
+        const captcha = readCaptcha(form);
+        if (!captcha.captchaToken || !captcha.captchaAnswer) { alert('Mohon isi jawaban captcha terlebih dahulu.'); return; }
 
         const kodeCms = form.querySelector('[name="kodeCms"]').value;
         const username = form.querySelector('[name="username"]').value.trim();
@@ -224,9 +232,9 @@ const auth = {
 
         const btn = form.querySelector('button[type="submit"]');
         if (btn) { btn.disabled = true; btn.textContent = 'Memproses...'; }
-        const err = await this.login(kodeCms, username, password, captchaToken).catch(e => e.message);
+        const err = await this.login(kodeCms, username, password, captcha).catch(e => e.message);
         if (btn) { btn.disabled = false; btn.textContent = 'Masuk'; }
-        if (typeof turnstile !== 'undefined') turnstile.reset();
+        await renderMathCaptcha(form); // soal lama sudah terpakai (atau salah) -> ganti yang baru
 
         if (err) { this._recordLoginFailure(); alert(err); return; }
         this._clearLoginFailures();
@@ -245,21 +253,21 @@ const auth = {
     },
 
     async handleRegisterSubmit(form) {
-        const captchaToken = getTurnstileToken(form);
-        if (!captchaToken) { alert('Mohon selesaikan verifikasi captcha terlebih dahulu.'); return; }
+        const captcha = readCaptcha(form);
+        if (!captcha.captchaToken || !captcha.captchaAnswer) { alert('Mohon isi jawaban captcha terlebih dahulu.'); return; }
 
         const val = (name) => form.querySelector(`[name="${name}"]`)?.value.trim() || '';
         const payload = {
             kodeCms: val('kodeCms'), namaCms: val('namaCms'), bio: val('bio'),
             ownerName: val('ownerName'), username: val('username'),
             password: form.querySelector('[name="password"]').value,
-            turnstileToken: captchaToken,
+            ...captcha,
         };
         const btn = form.querySelector('button[type="submit"]');
         if (btn) { btn.disabled = true; btn.textContent = 'Mendaftarkan...'; }
         const err = await this.register(payload).catch(e => e.message);
         if (btn) { btn.disabled = false; btn.textContent = 'Daftar & Mulai'; }
-        if (typeof turnstile !== 'undefined') turnstile.reset();
+        await renderMathCaptcha(form);
 
         if (err) { alert(err); return; }
         alert(`CMS "${payload.namaCms}" berhasil dibuat di cms.piawai.id/?profile/${payload.kodeCms.toLowerCase()}. Selamat menulis!`);
@@ -286,8 +294,20 @@ function requireLogin(allowedRoles) {
     return null; // null = boleh lanjut
 }
 
+/** Ambil soal captcha awal untuk sebuah form baru dibuka. Dibungkus try/catch
+ *  supaya server yang sedang bermasalah tidak membuat seluruh halaman Masuk/
+ *  Daftar gagal dirender — pesan errornya ditampilkan di slot captcha saja. */
+async function initialCaptchaFieldHtml() {
+    try {
+        const { challenge, token } = await db.getCaptcha();
+        return `<div class="js-captcha-slot">${mathCaptchaFieldsHtml(challenge, token)}</div>`;
+    } catch (e) {
+        return `<div class="js-captcha-slot"><div class="a-row"><span style="color:var(--red,#c00)">Gagal memuat captcha: ${escHtml(e.message)}</span></div></div>`;
+    }
+}
+
 web.routes.login = 'resolveLogin';
-web.resolveLogin = function () {
+web.resolveLogin = async function () {
     if (auth.isLoggedIn()) {
         return [{ section: 'titleHero', title: 'Anda Sudah Masuk',
                    description: `Masuk sebagai <strong>${auth.currentUser().name}</strong>.` }];
@@ -301,7 +321,7 @@ web.resolveLogin = function () {
                 { type: 'text', name: 'kodeCms', label: 'Kode CMS', placeholder: 'mis. wawan', required: true, autocomplete: 'username' },
                 { type: 'text', name: 'username', label: 'Username', required: true, autocomplete: 'username' },
                 { type: 'password', name: 'password', label: 'Password', required: true, autocomplete: 'current-password' },
-                { type: 'raw', html: turnstileWidgetHtml() },
+                { type: 'raw', html: await initialCaptchaFieldHtml() },
             ],
             submitText: 'Masuk',
             onSubmit: 'event.preventDefault(); auth.handleLoginSubmit(this);',
@@ -317,7 +337,7 @@ web.resolveLogin = function () {
 };
 
 web.routes.register = 'resolveRegister';
-web.resolveRegister = function () {
+web.resolveRegister = async function () {
     if (auth.isLoggedIn()) return web.resolveLogin();
     return [
         { section: 'titleHero', title: 'Buat CMS Baru', description: 'Buat CMS Anda sendiri dalam satu langkah — dapat alamat cms.piawai.id/?profile/kode-anda.' },
@@ -331,7 +351,7 @@ web.resolveRegister = function () {
                 { type: 'text', name: 'ownerName', label: 'Nama Anda', required: true, maxlength: 80, autocomplete: 'name' },
                 { type: 'text', name: 'username', label: 'Username Login', required: true, maxlength: 40, autocomplete: 'username' },
                 { type: 'password', name: 'password', label: 'Password (min. 8 karakter)', required: true, autocomplete: 'new-password' },
-                { type: 'raw', html: turnstileWidgetHtml() },
+                { type: 'raw', html: await initialCaptchaFieldHtml() },
             ],
             submitText: 'Daftar & Mulai',
             onSubmit: 'event.preventDefault(); auth.handleRegisterSubmit(this);',

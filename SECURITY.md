@@ -25,9 +25,10 @@ Sini" sebelum menganggap aplikasi ini "sudah aman".
    (lihat temuan #2 di bawah) — cmsId, role, userId di `localStorage` bisa
    diedit siapa pun lewat DevTools. Keputusan "siapa boleh apa" harus diverifikasi
    ulang di server dari token sesi, bukan dari field yang dikirim klien.
-5. **Captcha hanya berarti kalau diverifikasi di server.** Widget di frontend
-   cuma UX gate; kalau backend tidak memanggil `siteverify`, bot yang memanggil
-   API langsung tetap lolos.
+5. **Captcha hanya berarti kalau diverifikasi di server.** Soal captcha
+   matematika (`auth.js` → `db.getCaptcha()`) cuma UX gate di frontend;
+   yang menentukan benar/salah adalah `cms-api` (`verifyMathCaptcha()`),
+   bukan JS di sini.
 6. **Kredensial tidak pernah dalam bentuk yang bisa dibaca ulang** — password
    harus di-hash (Argon2id/bcrypt) di backend saat disimpan, dan dibandingkan
    lewat verifikasi hash, bukan `===` string biasa.
@@ -40,7 +41,7 @@ Sini" sebelum menganggap aplikasi ini "sudah aman".
 | 2 | `genericForm()` menaruh `value="${...}"` field (mis. judul artikel) tanpa escape — nilai dengan `"` bisa keluar dari atribut dan menyuntik `onfocus=...autofocus` (XSS tanpa perlu klik). | Semua `value`, `placeholder`, opsi `<select>` di-escape lewat `escHtml()`. |
 | 3 | Isi artikel (`post.konten`) dirender lewat `innerHTML` apa adanya — penulis boleh mengetik HTML bebas, dan itu langsung tayang ke SEMUA pengunjung publik tanpa disaring. | Ditambah `sanitizeHtml()` (allowlist tag `p,strong,a,ul,li,img,...` + atribut, buang skema `javascript:`/`data:` di `href`/`src`, buang semua `on*`). Dipanggil di `pages/public.js` sebelum `post.konten` ditayangkan. |
 | 4 | Komentar publik bisa dikirim siapa saja tanpa akun, dengan nama bebas ketik (mudah dipalsukan/spam). | Form komentar hanya tampil untuk pengguna yang login; nama diambil dari sesi, bukan input bebas. Lihat `komentarFormOrLoginPrompt()` di `pages/public.js`. |
-| 5 | Tidak ada captcha di login/registrasi. | Widget Cloudflare Turnstile ditambahkan ke kedua form (`auth.js`, dimuat lewat `index.html`). **Lihat batasan penting di bawah.** |
+| 5 | Tidak ada captcha di login/registrasi. | Captcha matematika kustom ditambahkan ke kedua form (`auth.js`): soal diminta ke server (`GET /public?view=captcha`) dan jawabannya diverifikasi di server (`cms-api`), bukan cuma dicek di frontend. |
 | 6 | Beberapa nilai disisipkan ke atribut `onclick="...('${id}')"` — kalau id mengandung tanda kutip, bisa memutus keluar dari handler. | Diganti pakai `JSON.stringify(...)` saat menyisip ke `onclick` (`pages/cms.js`, `pages/postingan.js`). |
 | 7 | Tidak ada batas panjang input (nama CMS, bio, komentar, dst.) — memperbesar permukaan serangan & spam. | Ditambah `maxlength` di field registrasi & komentar. |
 
@@ -49,6 +50,11 @@ Sini" sebelum menganggap aplikasi ini "sudah aman".
 Ini bagian **paling penting** untuk dibaca — repo `cms-app` ini murni frontend
 statis; backend (`cms-api`, Cloudflare Worker) ada di repo terpisah yang tidak
 ikut ter-upload, jadi berikut ini tidak bisa dituntaskan hanya dari sini.
+
+> **Status terkini:** temuan-temuan di bawah ini sudah ditutup di
+> `cms-api/SECURITY.md` (bagian "Yang diperbaiki") — dipertahankan di sini
+> apa adanya sebagai catatan sejarah kenapa perbaikannya harus di backend,
+> bukan sebagai daftar tugas yang masih terbuka.
 
 ### KRITIS — Password & data pengguna bisa diakses langsung lewat API
 
@@ -65,8 +71,8 @@ lalu cocokkan `username`/`password` **di browser**. Konsekuensinya:
 
 **Perbaikan yang diperlukan (di `cms-api`):**
 1. Buat endpoint login khusus di server, mis. `POST /public?view=login`
-   menerima `{kodeCms, username, password, turnstileToken}`, memverifikasi
-   Turnstile lewat `siteverify`, mencocokkan password terhadap **hash**
+   menerima `{kodeCms, username, password, captchaToken, captchaAnswer}`,
+   memverifikasi captcha di server, mencocokkan password terhadap **hash**
    (Argon2id/bcrypt) di server, lalu mengembalikan **token sesi** (JWT
    bertanda tangan atau opaque token tersimpan di server) — bukan daftar user.
 2. Hentikan pola "fetch semua baris tabel `users` ke klien" sama sekali.
@@ -88,12 +94,13 @@ backend harus mengabaikannya dan memakai nilai dari token.
 
 ### TINGGI — Captcha & rate limiting login perlu diverifikasi/ditegakkan di server
 
-Widget Turnstile yang sudah ditambahkan di frontend **hanya efektif** kalau
-`cms-api` memanggil `siteverify` (contoh kode lengkap ada di komentar atas
-`auth.js`, dekat `TURNSTILE_SITE_KEY`). Begitu juga pengunci percobaan login
+Captcha matematika yang sudah ditambahkan di frontend **hanya efektif** kalau
+`cms-api` memverifikasi ulang `captchaToken`+`captchaAnswer` di server (lihat
+`verifyMathCaptcha()` di `worker.js`, repo `cms-api`) — versi yang di-deploy
+sekarang SUDAH melakukan ini. Begitu juga pengunci percobaan login
 (`auth._recordLoginFailure`) di frontend murni kosmetik — bot yang memanggil
-API langsung tidak melewatinya. Backend perlu rate limit asli (per IP dan/atau
-per akun, mis. lewat Cloudflare Rate Limiting atau counter di KV/D1).
+API langsung tidak melewatinya; rate limit yang menegakkan ini ada di
+`cms-api` (tabel `rate_limit`, per IP dan per akun).
 
 ### SEDANG — Sanitasi HTML idealnya juga ada di backend
 
@@ -103,18 +110,11 @@ yang membuka artikel lewat frontend ini. Tapi kalau ada konsumen API lain
 lewat frontend ini, mereka tidak ikut terlindungi. Idealnya `cms-api`
 men-sanitize `konten` saat disimpan (atau minimal saat dibaca lewat endpoint publik).
 
-### SEDANG — Ganti Turnstile Site Key contoh
+## File lama yang sudah dihapus
 
-`TURNSTILE_SITE_KEY` di `auth.js` masih placeholder
-(`0x0000000000000000AA`). Buat widget asli di dashboard Cloudflare Turnstile,
-tempel Site Key ke sana, dan simpan Secret Key sebagai **Worker secret** di
-`cms-api` (jangan pernah taruh Secret Key di repo frontend mana pun).
-
-## File lama yang sebaiknya dihapus
-
-`app.html`, `public.js` (root, bukan `pages/public.js`), dan `pages/tenant.js`
-tampaknya sisa arsitektur versi sebelumnya dan tidak dimuat oleh `index.html`
-(lihat `dataset.js` → `pageFiles`). File yang tidak dipakai tapi masih ada di
-repo memperbesar permukaan serangan (mis. kalau suatu saat ter-deploy/ter-index
-tanpa sadar) dan membingungkan audit berikutnya — pertimbangkan dihapus atau
-dipindah ke branch arsip.
+`app.html`, `public.js` (root, bukan `pages/public.js`), `pages/tenant.js`,
+dan `CATATAN-PATCH.md` adalah sisa arsitektur versi sebelumnya, tidak dimuat
+oleh `index.html` (lihat `dataset.js` → `pageFiles`), dan sudah dihapus dari
+repo ini. `pages/tenant.js` khususnya sudah rusak sebelum dihapus — memanggil
+`db.allTenants()`/`db.updateTenant()` yang sudah berganti nama jadi
+`db.allCms()`/`db.updateCms()` di refactor v3 (lihat `README.md` di `cms-api`).

@@ -403,7 +403,7 @@ const components = {
     genericForm: (ctx) => {
         const fields = (ctx.fields || []).map(f => {
             // Field tipe 'raw' dipakai untuk menyisip HTML yang HARUS berada di
-            // dalam <form> (mis. widget captcha Turnstile — token responsnya
+            // dalam <form> (mis. field captcha matematika — token & jawabannya
             // ditaruh sebagai hidden input di dalam form terdekat, jadi kalau
             // widgetnya ditaruh di luar <form>, form.querySelector(...) di JS
             // tidak akan pernah menemukan tokennya). Isinya HARUS HTML yang
